@@ -1,0 +1,18 @@
+//! GitHub for gitui: the account token in the OS keychain, pull requests and
+//! issues through the REST API, and the OAuth device flow for signing in.
+//!
+//! Only GitHub for now; the types are generic enough for another forge later.
+
+mod askpass;
+mod device;
+mod error;
+mod github;
+mod remote;
+mod token;
+
+pub use askpass::{Prompt, answer_prompt, parse_prompt};
+pub use device::{DeviceCode, DevicePoll, poll_device, start_device_flow};
+pub use error::{Error, Result};
+pub use github::{Account, Comment, GitHub, Issue, ItemState, Label, PullRequest};
+pub use remote::{GitHubRepo, parse_github_url};
+pub use token::{clear_token, load_token, save_token};

@@ -1,0 +1,20 @@
+[package]
+name = "gitui-core"
+description = "Git operations for gitui, independent of any UI framework"
+version.workspace = true
+edition.workspace = true
+
+[features]
+# Derives `specta::Type` on the public types so a frontend can generate bindings.
+specta = ["dep:specta"]
+
+[dependencies]
+# Network operations go through the `git` binary, so libgit2's transports stay off.
+git2 = { version = "0.21", default-features = false }
+serde.workspace = true
+specta = { workspace = true, optional = true }
+thiserror = "2"
+
+[dev-dependencies]
+serde_json = "1"
+tempfile = "3"

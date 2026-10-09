@@ -1,0 +1,73 @@
+name: Release
+
+# Pushing a tag such as `v0.1.0` builds the installers for every platform and
+# attaches them to a draft GitHub release, to be reviewed and published by hand.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Installer (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows
+            os: windows-latest
+            args: ""
+          - name: macos-arm
+            os: macos-latest
+            args: "--target aarch64-apple-darwin"
+          - name: macos-intel
+            os: macos-latest
+            args: "--target x86_64-apple-darwin"
+          - name: linux
+            os: ubuntu-22.04
+            args: ""
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Linux packages for Tauri
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libdbus-1-dev pkg-config
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.name == 'macos-arm' && 'aarch64-apple-darwin' || matrix.name == 'macos-intel' && 'x86_64-apple-darwin' || '' }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Optional: bakes the OAuth client id of the GitHub App into the build
+          # so "Sign in with GitHub" is offered (a personal token always works).
+          GITUI_GITHUB_CLIENT_ID: ${{ secrets.GITUI_GITHUB_CLIENT_ID }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "gitui ${{ github.ref_name }}"
+          releaseBody: "See the assets below for the installers."
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}

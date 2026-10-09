@@ -1,0 +1,28 @@
+[package]
+name = "gitui-forge"
+description = "Pull requests and issues on GitHub for gitui"
+version.workspace = true
+edition.workspace = true
+
+[features]
+# Derives `specta::Type` on the public types so a frontend can generate bindings.
+specta = ["dep:specta"]
+
+[dependencies]
+chrono = "0.4"
+keyring = "4"
+# Default features pull `jsonwebtoken` with `aws-lc`, which needs NASM and CMake on
+# Windows; GitHub App JWTs are not needed, and `ring` serves TLS.
+octocrab = { version = "0.54", default-features = false, features = [
+    "default-client",
+    "follow-redirect",
+    "retry",
+    "rustls",
+    "rustls-ring",
+    "timeout",
+] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+serde.workspace = true
+serde_json = "1"
+specta = { workspace = true, optional = true }
+thiserror = "2"
