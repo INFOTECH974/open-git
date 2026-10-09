@@ -104,6 +104,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
 /// Runs on every debug start, so the file stays in sync with the commands.
 /// (A `#[test]` would be nicer, but on Windows the test harness of this crate
 /// fails to load with `STATUS_ENTRYPOINT_NOT_FOUND`.)
+#[cfg(debug_assertions)]
 fn export_bindings(builder: &Builder<tauri::Wry>) {
     builder
         .export(
