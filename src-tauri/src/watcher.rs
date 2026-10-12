@@ -52,7 +52,10 @@ pub fn watch(app: AppHandle, repo_path: String) -> notify::Result<RepoWatcher> {
                     .map(|component| component.as_os_str().to_string_lossy().into_owned())
                     .unwrap_or_default();
                 // The object store churns on every operation; lock files come and go.
-                if matches!(first.as_str(), "objects" | "logs" | "lfs") || first.ends_with(".lock")
+                // Every fetch rewrites `FETCH_HEAD`, even one that brings nothing: the
+                // references it moves are what counts.
+                if matches!(first.as_str(), "objects" | "logs" | "lfs" | "FETCH_HEAD")
+                    || first.ends_with(".lock")
                 {
                     continue;
                 }

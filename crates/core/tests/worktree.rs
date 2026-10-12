@@ -4,7 +4,7 @@
 //! Commit, checkout and the remote operations spawn the real `git` binary, kept
 //! away from the user's configuration through environment variables.
 
-use std::{ffi::OsString, fs, path::Path, process::Command};
+use std::{ffi::OsString, fs, path::Path, process::Command, time::Duration};
 
 use git2::{IndexAddOption, Oid, Repository, RepositoryInitOptions, Signature, Time};
 use gitui_core::{
@@ -450,6 +450,55 @@ fn push_fetch_and_pull_against_a_bare_remote() {
 }
 
 #[test]
+fn background_fetch_follows_a_branch_moved_on_the_remote() {
+    let fixture = Fixture::new();
+    let remote_dir = tempfile::tempdir().unwrap();
+    let remote = Repository::init_bare(remote_dir.path()).unwrap();
+    remote.set_head("refs/heads/main").unwrap();
+    let remote_url = remote_dir.path().to_string_lossy().replace('\\', "/");
+    fixture.git().remote("origin", &remote_url).unwrap();
+    let mut repo = fixture.repo();
+    repo.push().unwrap();
+
+    // The remote promotes `main` to `production` by itself, as a deployment job does.
+    remote
+        .reference("refs/heads/production", fixture.initial, false, "promote")
+        .unwrap();
+    let before = repo.refs().unwrap();
+    assert!(!before.iter().any(|r| r.name == "origin/production"));
+
+    // The fetch does not borrow the repository, which stays readable meanwhile.
+    let fetch = repo.background_fetch().unwrap();
+    fetch.run_within(Duration::from_secs(60)).unwrap();
+    let after = repo.refs().unwrap();
+    assert!(
+        after.iter().any(|r| r.name == "origin/production"
+            && r.kind == RefKind::RemoteBranch
+            && r.target == fixture.initial.to_string()),
+        "{after:?}"
+    );
+
+    // Nothing moved since: the references compare equal, so the UI is left alone.
+    fetch.run_within(Duration::from_secs(60)).unwrap();
+    assert_eq!(repo.refs().unwrap(), after);
+
+    // A branch deleted on the remote is pruned.
+    remote
+        .find_reference("refs/heads/production")
+        .unwrap()
+        .delete()
+        .unwrap();
+    fetch.run_within(Duration::from_secs(60)).unwrap();
+    assert_eq!(repo.refs().unwrap(), before);
+
+    // A fetch that outlives its deadline is stopped.
+    assert!(matches!(
+        fetch.run_within(Duration::ZERO),
+        Err(Error::Cancelled)
+    ));
+}
+
+#[test]
 fn add_to_gitignore_creates_the_file_and_hides_untracked_files() {
     let fixture = Fixture::new();
     fixture.write("secret.env", "x\n");
@@ -871,6 +920,47 @@ fn init_and_clone_create_usable_repositories() {
         Repo::clone("not-a-url", dir.path().join("bad"), env),
         Err(Error::Command { .. })
     ));
+}
+
+#[test]
+fn cancelling_stops_a_command_that_is_running() {
+    use std::{thread, time::Instant};
+
+    use gitui_core::CancelToken;
+
+    let dir = tempfile::tempdir().unwrap();
+    let env = git_env(dir.path());
+    let source = dir.path().join("source");
+    let mut created = Repo::init(&source, env.clone()).unwrap();
+    write(&source, "README.md", "init\n");
+    created.stage_all().unwrap();
+    created.commit("First\n", false).unwrap();
+    let url = source.to_string_lossy().replace('\\', "/");
+    let clone = dir.path().join("clone");
+    let cloned = Repo::clone(&url, &clone, env.clone()).unwrap();
+
+    // A remote that never answers: its side of the conversation only sleeps.
+    run_git(
+        &clone,
+        &env,
+        &["config", "remote.origin.uploadpack", "sleep 30 #"],
+    );
+    let fetch = cloned.fetch_command().unwrap();
+    let token = CancelToken::new();
+    let started = Instant::now();
+    let result = thread::scope(|scope| {
+        let running = scope.spawn(|| fetch.run(&token, &mut |_| {}));
+        thread::sleep(Duration::from_millis(1500));
+        token.cancel();
+        running.join().unwrap()
+    });
+    assert!(matches!(result, Err(Error::Cancelled)), "{result:?}");
+    // `git` starts helpers that outlive it unless they are stopped with it.
+    assert!(
+        started.elapsed() < Duration::from_secs(15),
+        "cancelling took {:?}",
+        started.elapsed()
+    );
 }
 
 #[test]

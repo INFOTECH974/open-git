@@ -95,7 +95,7 @@ const OPERATION_LABELS: Record<string, string> = {
 /** Everything about one open repository: refs, graph, details, diffs, actions. */
 export function RepositoryView({ info, active }: Props) {
   const { t } = useI18n();
-  const repo = useRepository(info);
+  const repo = useRepository(info, active);
   const path = repo.info.path;
   const headTarget = repo.info.head.target;
   const busy = repo.operation !== null;

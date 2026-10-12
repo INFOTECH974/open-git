@@ -535,6 +535,18 @@ const PROGRESS_LINES = [
 
 const cancelled = new Set<string>();
 
+/** How long the remote's deployment job takes to move `production` after a push to `main`. */
+const PROMOTION_DELAY_MS = 5000;
+let promotion: { due: number; target: string } | null = null;
+
+/** What a fetch brings back: whether a remote branch moved since the last one. */
+function fetchRemote(): boolean {
+  if (!promotion || Date.now() < promotion.due) return false;
+  remoteTips.set("origin/production", promotion.target);
+  promotion = null;
+  return true;
+}
+
 /** Plays git-like progress lines for `path`, stopping early when cancelled. */
 async function withProgress(path: string, operation: string, stepMs = 180): Promise<void> {
   cancelled.delete(path);
@@ -542,7 +554,7 @@ async function withProgress(path: string, operation: string, stepMs = 180): Prom
     await new Promise((resolve) => setTimeout(resolve, stepMs));
     if (cancelled.has(path)) {
       cancelled.delete(path);
-      throw gitError("the operation was cancelled");
+      throw { kind: "cancelled", message: "the operation was cancelled" } satisfies AppError;
     }
     const match = /(\d+)%/.exec(message);
     await emitEvent("operation-progress", {
@@ -845,7 +857,12 @@ function handle(command: string, args: Record<string, unknown>): unknown {
 
     // remotes
     case "fetch":
-      return withProgress(path, "fetch").then(() => null);
+      return withProgress(path, "fetch").then(() => {
+        fetchRemote();
+        return null;
+      });
+    case "fetch_in_background":
+      return new Promise((resolve) => setTimeout(() => resolve(fetchRemote()), 400));
     case "pull": {
       const repo = repoAt(path);
       return withProgress(path, "pull").then(() => {
@@ -857,7 +874,10 @@ function handle(command: string, args: Record<string, unknown>): unknown {
       const repo = repoAt(path);
       if (!repo.head.branch) throw gitError("HEAD is detached; check out a branch first");
       return withProgress(path, "push").then(() => {
-        if (repo.head.branch === "main") remoteTips.set("origin/main", repo.head.target);
+        if (repo.head.branch === "main") {
+          remoteTips.set("origin/main", repo.head.target);
+          promotion = { due: Date.now() + PROMOTION_DELAY_MS, target: repo.head.target };
+        }
         repo.ahead = 0;
         return null;
       });

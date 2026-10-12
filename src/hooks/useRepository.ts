@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { GraphRow, RefInfo, RepoInfo, StashEntry, WorkingTreeStatus } from "@/bindings";
-import { api, errorMessage, events, isRepositoryNotOpen } from "@/lib/api";
+import { api, errorMessage, events, isCancelled, isRepositoryNotOpen } from "@/lib/api";
 import { rowLaneCount } from "@/lib/graph";
 
 /** Rows fetched per request; a page covers several screens of history. */
@@ -63,6 +63,10 @@ export interface Repository {
   clearError(): void;
 }
 
+function isNetworkOperation(operation: Operation | null): boolean {
+  return operation === "fetch" || operation === "pull" || operation === "push";
+}
+
 export function isClean(status: WorkingTreeStatus | null): boolean {
   return (
     status === null ||
@@ -74,8 +78,16 @@ export function isClean(status: WorkingTreeStatus | null): boolean {
 const OWN_CHANGE_GRACE_MS = 800;
 /** Lets a burst of events (a checkout touching many files) settle before reloading. */
 const EVENT_SETTLE_MS = 250;
+/** How often the remotes are fetched without the user asking. */
+const AUTO_FETCH_INTERVAL_MS = 60_000;
+/** Coming back to the window fetches at once, unless the last fetch is this recent. */
+const AUTO_FETCH_MIN_GAP_MS = 10_000;
 
-export function useRepository(initial: RepoInfo): Repository {
+/**
+ * State of one open repository. `active` is whether its tab is the one shown:
+ * only that repository fetches its remotes on its own.
+ */
+export function useRepository(initial: RepoInfo, active: boolean): Repository {
   const path = initial.path;
   const [info, setInfo] = useState(initial);
   const [refs, setRefs] = useState<RefInfo[]>([]);
@@ -92,6 +104,9 @@ export function useRepository(initial: RepoInfo): Repository {
   const generation = useRef(0);
   const operationRef = useRef<Operation | null>(null);
   const lastOperationEnd = useRef(0);
+  // The automatic fetch in flight, and when the last one started.
+  const autoFetch = useRef<Promise<void> | null>(null);
+  const lastAutoFetch = useRef(0);
 
   const loadAll = useCallback(async () => {
     const current = ++generation.current;
@@ -136,11 +151,13 @@ export function useRepository(initial: RepoInfo): Repository {
       setOperation(nextOperation);
       setError(null);
       try {
+        // Two `git` processes updating the same remote branches would fight over them.
+        if (isNetworkOperation(nextOperation)) await autoFetch.current;
         await action();
         await (reload === "all" ? loadAll() : loadStatus());
         return true;
       } catch (failure) {
-        setError(errorMessage(failure));
+        if (!isCancelled(failure)) setError(errorMessage(failure));
         // The operation may have changed things before failing (a merge with conflicts).
         await loadAll().catch(() => {});
         return false;
@@ -201,6 +218,54 @@ export function useRepository(initial: RepoInfo): Repository {
       window.clearTimeout(timer);
     };
   }, [path, loadAll, loadStatus]);
+
+  // Remote branches only move when fetched. Fetch regularly, and whenever the user
+  // comes back to the window, so a push made elsewhere (a teammate, a CI job
+  // promoting a branch) shows up by itself.
+  const hasRemote = info.remotes.length > 0;
+  useEffect(() => {
+    if (!active || !hasRemote) return;
+    let stopped = false;
+
+    const fetchNow = () => {
+      if (document.hidden || autoFetch.current) return;
+      // Reading (the first load, a refresh) can overlap; anything else goes first.
+      if (operationRef.current !== null && operationRef.current !== "refresh") return;
+      lastAutoFetch.current = Date.now();
+      autoFetch.current = api
+        .fetchInBackground(path)
+        .catch(() => {
+          // Offline, no credentials, a remote that is gone: nobody asked for this
+          // fetch, so it fails quietly and the next one tries again.
+          return false;
+        })
+        .then(async (changed) => {
+          if (!changed || stopped) return;
+          // The watcher reports the same change; one reload is enough.
+          lastOperationEnd.current = Date.now();
+          await loadAll();
+          lastOperationEnd.current = Date.now();
+        })
+        .catch((failure) => setError(errorMessage(failure)))
+        .finally(() => {
+          autoFetch.current = null;
+        });
+    };
+    const fetchIfStale = () => {
+      if (Date.now() - lastAutoFetch.current >= AUTO_FETCH_MIN_GAP_MS) fetchNow();
+    };
+
+    fetchIfStale();
+    const timer = window.setInterval(fetchNow, AUTO_FETCH_INTERVAL_MS);
+    window.addEventListener("focus", fetchIfStale);
+    document.addEventListener("visibilitychange", fetchIfStale);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", fetchIfStale);
+      document.removeEventListener("visibilitychange", fetchIfStale);
+    };
+  }, [path, active, hasRemote, loadAll]);
 
   // Progress lines of the running fetch, pull or push.
   useEffect(() => {

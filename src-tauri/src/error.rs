@@ -8,6 +8,8 @@ pub enum AppError {
     RepositoryNotOpen(String),
     /// libgit2, the `git` binary or the core layer refused the operation.
     Git(String),
+    /// The user stopped the operation: nothing went wrong.
+    Cancelled(String),
     /// The operating system refused something (opening a file, for instance).
     System(String),
     /// GitHub, the keychain or the sign-in refused something.
@@ -16,7 +18,10 @@ pub enum AppError {
 
 impl From<gitui_core::Error> for AppError {
     fn from(error: gitui_core::Error) -> Self {
-        Self::Git(error.to_string())
+        match error {
+            gitui_core::Error::Cancelled => Self::Cancelled(error.to_string()),
+            _ => Self::Git(error.to_string()),
+        }
     }
 }
 

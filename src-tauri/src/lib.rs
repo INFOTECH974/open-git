@@ -73,6 +73,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::stash_drop,
             // remotes
             commands::fetch,
+            commands::fetch_in_background,
             commands::pull,
             commands::push,
             // GitHub

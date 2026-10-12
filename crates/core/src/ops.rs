@@ -9,7 +9,7 @@ use std::{fs, path::Path};
 use git2::{RepositoryState, build::CheckoutBuilder};
 use serde::{Deserialize, Serialize};
 
-use crate::{Error, Repo, Result, diff};
+use crate::{CancelToken, Error, RemoteCommand, Repo, Result, diff};
 
 /// Which version of a conflicted file to keep whole.
 ///
@@ -90,21 +90,33 @@ impl Repo {
 
     /// Deletes `origin/feature` on the remote itself.
     pub fn delete_remote_branch(&mut self, name: &str) -> Result<()> {
-        let (remote, branch) = self.split_remote_branch(name)?;
-        self.run_git(&["push", &remote, "--delete", &branch], None)?;
+        let result = self
+            .delete_remote_branch_command(name)?
+            .run(&CancelToken::new(), &mut |_| {});
         self.refresh();
-        Ok(())
+        result
+    }
+
+    pub fn delete_remote_branch_command(&self, name: &str) -> Result<RemoteCommand> {
+        let (remote, branch) = self.split_remote_branch(name)?;
+        self.remote_command(&["push", &remote, "--delete", &branch])
     }
 
     /// Pushes `name` to `remote` (the default one when `None`) and tracks it.
     pub fn push_branch(&mut self, name: &str, remote: Option<&str>) -> Result<()> {
+        let result = self
+            .push_branch_command(name, remote)?
+            .run(&CancelToken::new(), &mut |_| {});
+        self.refresh();
+        result
+    }
+
+    pub fn push_branch_command(&self, name: &str, remote: Option<&str>) -> Result<RemoteCommand> {
         let remote = match remote {
             Some(remote) => remote.to_owned(),
             None => self.default_remote()?,
         };
-        self.run_git(&["push", "--set-upstream", &remote, name], None)?;
-        self.refresh();
-        Ok(())
+        self.remote_command(&["push", "--progress", "--set-upstream", &remote, name])
     }
 
     pub fn set_upstream(&mut self, branch: &str, upstream: &str) -> Result<()> {

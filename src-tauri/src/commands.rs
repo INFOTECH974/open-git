@@ -4,9 +4,11 @@
 //! would block the webview while libgit2 reads the repository or `git` talks to a
 //! remote.
 
+use std::time::Duration;
+
 use gitui_core::{
-    CommitDetails, ConflictSide, FileContents, FileDiff, GraphRow, RefInfo, RefKind, Repo,
-    RepoInfo, StashEntry, WorkingTreeStatus,
+    CommitDetails, ConflictSide, FileContents, FileDiff, GraphRow, RefInfo, RefKind, RemoteCommand,
+    Repo, RepoInfo, StashEntry, WorkingTreeStatus,
 };
 use tauri::{AppHandle, State};
 use tauri_plugin_opener::OpenerExt;
@@ -390,20 +392,30 @@ pub fn delete_branch(
 /// Deletes `origin/feature` on the remote itself.
 #[tauri::command(async)]
 #[specta::specta]
-pub fn delete_remote_branch(state: State<'_, AppState>, path: String, name: String) -> Result<()> {
-    state.with_repo(&path, |repo| repo.delete_remote_branch(&name))
+pub fn delete_remote_branch(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+    name: String,
+) -> Result<()> {
+    run_remote(&app, &state, &path, "push", |repo| {
+        repo.delete_remote_branch_command(&name)
+    })
 }
 
 /// Pushes branch `name` to `remote` (the default one when `None`) and tracks it.
 #[tauri::command(async)]
 #[specta::specta]
 pub fn push_branch(
+    app: AppHandle,
     state: State<'_, AppState>,
     path: String,
     name: String,
     remote: Option<String>,
 ) -> Result<()> {
-    state.with_repo(&path, |repo| repo.push_branch(&name, remote.as_deref()))
+    run_remote(&app, &state, &path, "push", |repo| {
+        repo.push_branch_command(&name, remote.as_deref())
+    })
 }
 
 #[tauri::command(async)]
@@ -533,20 +545,63 @@ pub fn stash_drop(state: State<'_, AppState>, path: String, index: u32) -> Resul
 
 // ---- remotes --------------------------------------------------------------------
 
-#[tauri::command(async)]
-#[specta::specta]
-pub fn fetch(state: State<'_, AppState>, path: String) -> Result<()> {
-    state.with_repo(&path, |repo| repo.fetch())
+/// Runs a command that talks to a remote: its progress goes to the frontend as
+/// `operation`, `cancel_operation` stops it, and the repository stays free for
+/// other commands while `git` is on the network.
+fn run_remote(
+    app: &AppHandle,
+    state: &AppState,
+    path: &str,
+    operation: &'static str,
+    prepare: impl FnOnce(&Repo) -> gitui_core::Result<RemoteCommand>,
+) -> Result<()> {
+    let command = state.with_repo(path, |repo| prepare(repo))?;
+    let result = state.with_operation(path, |token| {
+        let mut report = progress::reporter(app.clone(), path.to_owned(), operation);
+        Ok(command.run(token, &mut report)?)
+    });
+    // Even a command that failed may have moved references. The repository may
+    // also have been closed meanwhile, which leaves nothing to forget.
+    let _ = state.with_repo(path, |repo| {
+        repo.refresh();
+        Ok(())
+    });
+    result
 }
 
+/// Fetches every remote and prunes branches deleted upstream.
 #[tauri::command(async)]
 #[specta::specta]
-pub fn pull(state: State<'_, AppState>, path: String) -> Result<()> {
-    state.with_repo(&path, |repo| repo.pull())
+pub fn fetch(app: AppHandle, state: State<'_, AppState>, path: String) -> Result<()> {
+    run_remote(&app, &state, &path, "fetch", Repo::fetch_command)
 }
 
+/// How long the automatic fetch may take before it is abandoned.
+const BACKGROUND_FETCH_TIMEOUT: Duration = Duration::from_secs(45);
+
+/// Fetches every remote on the application's own initiative and tells whether a
+/// branch or tag moved. Unlike [`fetch`] it never asks for credentials, and it
+/// leaves the repository free for other commands while `git` runs.
 #[tauri::command(async)]
 #[specta::specta]
-pub fn push(state: State<'_, AppState>, path: String) -> Result<()> {
-    state.with_repo(&path, |repo| repo.push())
+pub fn fetch_in_background(state: State<'_, AppState>, path: String) -> Result<bool> {
+    let (fetch, before) =
+        state.with_repo(&path, |repo| Ok((repo.background_fetch()?, repo.refs()?)))?;
+    fetch.run_within(BACKGROUND_FETCH_TIMEOUT)?;
+    let after = state.with_repo(&path, |repo| repo.refs())?;
+    Ok(before != after)
+}
+
+/// `git pull` on the current branch, honouring the user's `pull.rebase` setting.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn pull(app: AppHandle, state: State<'_, AppState>, path: String) -> Result<()> {
+    run_remote(&app, &state, &path, "pull", Repo::pull_command)
+}
+
+/// Pushes the current branch, setting its upstream on the first push.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn push(app: AppHandle, state: State<'_, AppState>, path: String) -> Result<()> {
+    run_remote(&app, &state, &path, "push", Repo::push_command)
 }

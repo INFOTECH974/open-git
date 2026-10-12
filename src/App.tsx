@@ -12,7 +12,7 @@ import { RepositoryView } from "@/components/RepositoryView";
 import { TabBar } from "@/components/TabBar";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { api, errorMessage, events } from "@/lib/api";
+import { api, errorMessage, events, isCancelled } from "@/lib/api";
 import { joinPath } from "@/lib/format";
 import { GitHubProvider, useGitHub } from "@/lib/github";
 import { I18nProvider, useI18n } from "@/lib/i18n";
@@ -117,7 +117,7 @@ function Shell() {
       } catch (failure) {
         // A quiet failure (session restore) keeps the entry in the recent list: the
         // repository may simply be unavailable for now.
-        if (!quiet) setError(errorMessage(failure));
+        if (!quiet && !isCancelled(failure)) setError(errorMessage(failure));
         return null;
       } finally {
         setOpening(false);

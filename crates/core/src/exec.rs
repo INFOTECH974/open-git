@@ -57,7 +57,7 @@ impl CancelToken {
         let mut state = self.lock();
         state.cancelled = true;
         if let Some(child) = state.child.as_mut() {
-            let _ = child.kill();
+            kill_tree(child);
         }
     }
 
@@ -70,6 +70,39 @@ impl CancelToken {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
+}
+
+/// Without this, every process started here flashes a console window in release builds.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// Kills `child` together with the processes it started.
+///
+/// `git` leaves the network to helpers (`git-remote-https`, `ssh`, and on Windows
+/// the real `git.exe` behind the launcher found on the `PATH`). Killing `child`
+/// alone would let them finish the transfer, holding the pipes read on this side.
+fn kill_tree(child: &mut Child) {
+    let mut killer;
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        killer = Command::new("taskkill");
+        killer
+            .args(["/PID", &child.id().to_string(), "/T", "/F"])
+            .creation_flags(CREATE_NO_WINDOW);
+    }
+    #[cfg(unix)]
+    {
+        // A negative id names the process group `git_with_progress` gave the child.
+        killer = Command::new("kill");
+        killer.args(["-KILL", &format!("-{}", child.id())]);
+    }
+    let _ = killer
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    let _ = child.kill();
 }
 
 fn command(workdir: &Path, env: &[(OsString, OsString)], args: &[&str]) -> Command {
@@ -95,8 +128,6 @@ fn command(workdir: &Path, env: &[(OsString, OsString)], args: &[&str]) -> Comma
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        // Without this, every `git` call flashes a console window in release builds.
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         command.creation_flags(CREATE_NO_WINDOW);
     }
     command
@@ -165,13 +196,19 @@ pub(crate) fn git_with_progress(
     }
     let mut command = command(workdir, env, args);
     command.stdin(Stdio::null());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        // Its own group, so that cancelling reaches the helpers it starts too.
+        command.process_group(0);
+    }
     let mut child = command.spawn().map_err(|source| Error::Spawn { source })?;
     let stdout = child.stdout.take().expect("stdout was piped");
     let mut stderr = child.stderr.take().expect("stderr was piped");
     {
         let mut state = token.lock();
         if state.cancelled {
-            let _ = child.kill();
+            kill_tree(&mut child);
         }
         state.child = Some(child);
     }

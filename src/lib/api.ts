@@ -119,6 +119,8 @@ export const api = {
 
   // remotes
   fetch: (path: string) => unwrap(commands.fetch(path)),
+  /** The unattended fetch; resolves to whether a branch or tag moved. */
+  fetchInBackground: (path: string) => unwrap(commands.fetchInBackground(path)),
   pull: (path: string) => unwrap(commands.pull(path)),
   push: (path: string) => unwrap(commands.push(path)),
 
@@ -155,6 +157,11 @@ export const api = {
 export function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   return String(error);
+}
+
+/** Whether the user stopped the operation, which is not a failure to report. */
+export function isCancelled(error: unknown): boolean {
+  return error instanceof CommandError && error.error.kind === "cancelled";
 }
 
 export function isRepositoryNotOpen(error: unknown): boolean {

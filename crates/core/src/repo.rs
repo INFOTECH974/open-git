@@ -1,6 +1,9 @@
 use std::{
     ffi::OsString,
     path::{Path, PathBuf},
+    sync::mpsc::{self, RecvTimeoutError},
+    thread,
+    time::Duration,
 };
 
 use git2::{BranchType, ErrorCode, Repository};
@@ -53,6 +56,44 @@ pub struct RepoInfo {
     /// `None` when `user.name` or `user.email` is not configured.
     pub author: Option<Identity>,
     pub remotes: Vec<String>,
+}
+
+/// A `git` command that talks to a remote, prepared by a [`Repo`].
+///
+/// It owns what it needs instead of borrowing the repository, so the caller can
+/// release the repository while `git` is on the network, then call
+/// [`Repo::refresh`] once it is done.
+pub struct RemoteCommand {
+    workdir: PathBuf,
+    env: Vec<(OsString, OsString)>,
+    args: Vec<String>,
+}
+
+impl RemoteCommand {
+    /// Runs the command, reporting the lines `git` prints; `token` stops it.
+    pub fn run(&self, token: &CancelToken, progress: Progress<'_>) -> Result<()> {
+        let args: Vec<&str> = self.args.iter().map(String::as_str).collect();
+        exec::git_with_progress(&self.workdir, &self.env, &args, token, progress).map(|_| ())
+    }
+
+    /// Runs the command silently, giving up with [`Error::Cancelled`] after `timeout`.
+    pub fn run_within(&self, timeout: Duration) -> Result<()> {
+        let token = CancelToken::new();
+        let (finished, wait) = mpsc::channel::<()>();
+        let watchdog = {
+            let token = token.clone();
+            thread::spawn(move || {
+                // Dropping `finished` wakes this up before the deadline.
+                if wait.recv_timeout(timeout) == Err(RecvTimeoutError::Timeout) {
+                    token.cancel();
+                }
+            })
+        };
+        let result = self.run(&token, &mut |_| {});
+        drop(finished);
+        let _ = watchdog.join();
+        result
+    }
 }
 
 /// An open repository.
@@ -426,13 +467,13 @@ impl Repo {
         token: &CancelToken,
         progress: Progress<'_>,
     ) -> Result<()> {
-        let result = self.run_git_with_progress(
-            &["fetch", "--all", "--prune", "--progress"],
-            token,
-            progress,
-        );
+        let result = self.fetch_command()?.run(token, progress);
         self.refresh();
-        result.map(|_| ())
+        result
+    }
+
+    pub fn fetch_command(&self) -> Result<RemoteCommand> {
+        self.remote_command(&["fetch", "--all", "--prune", "--progress"])
     }
 
     /// `git pull` on the current branch, honouring the user's `pull.rebase` setting.
@@ -445,9 +486,13 @@ impl Repo {
         token: &CancelToken,
         progress: Progress<'_>,
     ) -> Result<()> {
-        let result = self.run_git_with_progress(&["pull", "--progress"], token, progress);
+        let result = self.pull_command()?.run(token, progress);
         self.refresh();
-        result.map(|_| ())
+        result
+    }
+
+    pub fn pull_command(&self) -> Result<RemoteCommand> {
+        self.remote_command(&["pull", "--progress"])
     }
 
     /// Pushes the current branch, setting its upstream on the first push.
@@ -460,41 +505,46 @@ impl Repo {
         token: &CancelToken,
         progress: Progress<'_>,
     ) -> Result<()> {
-        // Scoped so the references are dropped before `refresh` borrows `self` mutably.
-        let (name, has_upstream) = {
-            let head = self.git.head()?;
-            if !head.is_branch() {
-                return Err(Error::DetachedHead);
-            }
-            let name = lossy(head.shorthand_bytes());
-            let has_upstream = self
-                .git
-                .find_branch(&name, BranchType::Local)?
-                .upstream()
-                .is_ok();
-            (name, has_upstream)
-        };
-        let result = if has_upstream {
-            self.run_git_with_progress(&["push", "--progress"], token, progress)
-        } else {
-            let remote = self.default_remote()?;
-            self.run_git_with_progress(
-                &["push", "--progress", "--set-upstream", &remote, &name],
-                token,
-                progress,
-            )
-        };
+        let result = self.push_command()?.run(token, progress);
         self.refresh();
-        result.map(|_| ())
+        result
     }
 
-    fn run_git_with_progress(
-        &self,
-        args: &[&str],
-        token: &CancelToken,
-        progress: Progress<'_>,
-    ) -> Result<exec::GitOutput> {
-        exec::git_with_progress(self.workdir()?, &self.git_env, args, token, progress)
+    pub fn push_command(&self) -> Result<RemoteCommand> {
+        let head = self.git.head()?;
+        if !head.is_branch() {
+            return Err(Error::DetachedHead);
+        }
+        let name = lossy(head.shorthand_bytes());
+        let has_upstream = self
+            .git
+            .find_branch(&name, BranchType::Local)?
+            .upstream()
+            .is_ok();
+        if has_upstream {
+            self.remote_command(&["push", "--progress"])
+        } else {
+            let remote = self.default_remote()?;
+            self.remote_command(&["push", "--progress", "--set-upstream", &remote, &name])
+        }
+    }
+
+    /// Prepares the fetch the application runs on its own to keep the remote
+    /// branches current.
+    pub fn background_fetch(&self) -> Result<RemoteCommand> {
+        let mut command = self.remote_command(&["fetch", "--all", "--prune", "--quiet"])?;
+        // The user is doing something else: Git Credential Manager must fail
+        // rather than open its sign-in window.
+        command.env.push(("GCM_INTERACTIVE".into(), "never".into()));
+        Ok(command)
+    }
+
+    pub(crate) fn remote_command(&self, args: &[&str]) -> Result<RemoteCommand> {
+        Ok(RemoteCommand {
+            workdir: self.workdir()?.to_owned(),
+            env: self.git_env.clone(),
+            args: args.iter().map(|&arg| arg.to_owned()).collect(),
+        })
     }
 
     /// `origin` when it exists, otherwise the only remote.

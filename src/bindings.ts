@@ -108,8 +108,17 @@ export const commands = {
 	stashApply: (path: string, index: number) => typedError<null, AppError>(__TAURI_INVOKE("stash_apply", { path, index })),
 	stashPop: (path: string, index: number) => typedError<null, AppError>(__TAURI_INVOKE("stash_pop", { path, index })),
 	stashDrop: (path: string, index: number) => typedError<null, AppError>(__TAURI_INVOKE("stash_drop", { path, index })),
+	/**  Fetches every remote and prunes branches deleted upstream. */
 	fetch: (path: string) => typedError<null, AppError>(__TAURI_INVOKE("fetch", { path })),
+	/**
+	 *  Fetches every remote on the application's own initiative and tells whether a
+	 *  branch or tag moved. Unlike [`fetch`] it never asks for credentials, and it
+	 *  leaves the repository free for other commands while `git` runs.
+	 */
+	fetchInBackground: (path: string) => typedError<boolean, AppError>(__TAURI_INVOKE("fetch_in_background", { path })),
+	/**  `git pull` on the current branch, honouring the user's `pull.rebase` setting. */
 	pull: (path: string) => typedError<null, AppError>(__TAURI_INVOKE("pull", { path })),
+	/**  Pushes the current branch, setting its upstream on the first push. */
 	push: (path: string) => typedError<null, AppError>(__TAURI_INVOKE("push", { path })),
 	/**  The connected account, signing in with the stored token on first use. */
 	githubAccount: () => typedError<{
@@ -158,6 +167,8 @@ export type AppError =
 { kind: "repositoryNotOpen"; message: string } | 
 /**  libgit2, the `git` binary or the core layer refused the operation. */
 { kind: "git"; message: string } | 
+/**  The user stopped the operation: nothing went wrong. */
+{ kind: "cancelled"; message: string } | 
 /**  The operating system refused something (opening a file, for instance). */
 { kind: "system"; message: string } | 
 /**  GitHub, the keychain or the sign-in refused something. */
