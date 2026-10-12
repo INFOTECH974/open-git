@@ -386,6 +386,7 @@ export const fr: Record<string, string> = {
   "What changed in {version}": "Nouveautés de la version {version}",
   "Looking for a newer version…": "Recherche d'une version plus récente…",
   "Open GIT is up to date.": "Open GIT est à jour.",
+  "Source code and releases on GitHub": "Code source et versions sur GitHub",
   "Downloading the update…": "Téléchargement de la mise à jour…",
   "Downloading the update… {percent}%": "Téléchargement de la mise à jour… {percent} %",
   "Installing; the application is about to restart…": "Installation ; l'application va redémarrer…",

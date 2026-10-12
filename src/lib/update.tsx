@@ -6,8 +6,10 @@ import { api, errorMessage, events } from "@/lib/api";
 /** How often an open application looks for a newer release. */
 const CHECK_EVERY_MS = 4 * 60 * 60 * 1000;
 
+/** Where the source code lives. */
+export const REPOSITORY_URL = "https://github.com/INFOTECH974/open-git";
 /** Where the releases are published, for the link to what changed. */
-export const RELEASES_URL = "https://github.com/INFOTECH974/open-git/releases";
+export const RELEASES_URL = `${REPOSITORY_URL}/releases`;
 
 /** The update of the application itself, from the latest GitHub release. */
 export interface UpdateState {

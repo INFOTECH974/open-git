@@ -11,7 +11,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useI18n } from "@/lib/i18n";
-import { RELEASES_URL, useUpdate } from "@/lib/update";
+import { RELEASES_URL, REPOSITORY_URL, useUpdate } from "@/lib/update";
 import { cn } from "@/lib/utils";
 
 /**
@@ -89,6 +89,17 @@ export function UpdateDialog() {
               {t("Open GIT is up to date.")}
             </p>
           )
+        )}
+
+        {!available && !installing && (
+          <button
+            type="button"
+            className="inline-flex items-center gap-1 justify-self-start text-sm text-muted-foreground underline hover:text-foreground"
+            onClick={() => void openUrl(REPOSITORY_URL)}
+          >
+            <ExternalLink className="size-3.5" aria-hidden />
+            {t("Source code and releases on GitHub")}
+          </button>
         )}
 
         {update.error && <p className="text-sm break-words text-destructive">{update.error}</p>}

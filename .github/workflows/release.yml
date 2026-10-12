@@ -92,6 +92,20 @@ jobs:
           releaseBody: "See the assets below for the installers."
           releaseDraft: true
           prerelease: false
-          # Windows gets two installers; `latest.json` points to the NSIS one.
-          updaterJsonPreferNsis: true
+          # Written once by the `updater` job: these jobs run side by side and
+          # would overwrite each other's entries.
+          includeUpdaterJson: false
           args: ${{ matrix.args }}
+
+  updater:
+    name: latest.json
+    # Only when every installer is there: an update that misses a platform
+    # would never reach its users.
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Write latest.json from the signatures of the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node .github/scripts/latest-json.mjs "$GITHUB_REF_NAME"
