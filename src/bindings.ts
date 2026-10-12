@@ -133,6 +133,8 @@ export const commands = {
 	githubDeviceAvailable: () => __TAURI_INVOKE<boolean>("github_device_available"),
 	githubDeviceStart: () => typedError<DeviceCode, AppError>(__TAURI_INVOKE("github_device_start")),
 	githubDevicePoll: (deviceCode: string) => typedError<DeviceStatus, AppError>(__TAURI_INVOKE("github_device_poll", { deviceCode })),
+	/**  The repositories the connected account can clone, most recently pushed first. */
+	githubRepositories: () => typedError<RemoteRepository[], AppError>(__TAURI_INVOKE("github_repositories")),
 	/**  The GitHub repository behind `origin`, or `None` when it is not on github.com. */
 	githubRepository: (path: string) => typedError<{
 	owner: string,
@@ -145,12 +147,39 @@ export const commands = {
 	githubIssueComments: (path: string, number: number) => typedError<Comment[], AppError>(__TAURI_INVOKE("github_issue_comments", { path, number })),
 	githubCommentIssue: (path: string, number: number, body: string) => typedError<Comment, AppError>(__TAURI_INVOKE("github_comment_issue", { path, number, body })),
 	githubCloseIssue: (path: string, number: number) => typedError<Issue, AppError>(__TAURI_INVOKE("github_close_issue", { path, number })),
+	/**
+	 *  The providers that can be used now: a key is stored for them, or their
+	 *  program is installed.
+	 */
+	aiProviders: () => typedError<Provider[], AppError>(__TAURI_INVOKE("ai_providers")),
+	/**  Checks `key` by listing what it can use, then stores it. Returns that list. */
+	aiSaveKey: (provider: Provider, key: string) => typedError<AiModel[], AppError>(__TAURI_INVOKE("ai_save_key", { provider, key })),
+	aiClearKey: (provider: Provider) => typedError<null, AppError>(__TAURI_INVOKE("ai_clear_key", { provider })),
+	/**
+	 *  The models to choose from, newest first: what the stored key can use, or
+	 *  the few names an installed program accepts besides its own default.
+	 */
+	aiModels: (provider: Provider) => typedError<AiModel[], AppError>(__TAURI_INVOKE("ai_models", { provider })),
+	/**
+	 *  Sends the staged changes of `path` (what the amended commit would hold, with
+	 *  `amend`) to `model` and returns the message it proposes. An empty `model`
+	 *  leaves an installed program its own default.
+	 */
+	aiCommitMessage: (path: string, provider: Provider, model: string, amend: boolean) => typedError<CommitSuggestion, AppError>(__TAURI_INVOKE("ai_commit_message", { path, provider, model, amend })),
+	/**  The version of the latest release when it is newer than the running one. */
+	updateCheck: () => typedError<string | null, AppError>(__TAURI_INVOKE("update_check")),
+	/**
+	 *  Downloads the latest release, installs it and restarts the application.
+	 *  Only returns when that failed.
+	 */
+	updateInstall: () => typedError<null, AppError>(__TAURI_INVOKE("update_install")),
 };
 
 /** Events */
 export const events = {
 	operationProgress: makeEvent<OperationProgress>("operation-progress"),
 	repositoryChanged: makeEvent<RepositoryChanged>("repository-changed"),
+	updateProgress: makeEvent<UpdateProgress>("update-progress"),
 };
 
 /* Types */
@@ -159,6 +188,14 @@ export type Account = {
 	login: string,
 	avatarUrl: string,
 	htmlUrl: string,
+};
+
+/**  A model the user can pick. */
+export type AiModel = {
+	/**  What the API calls it, such as `claude-opus-5-5`. */
+	id: string,
+	/**  What people call it; the id again when the provider gives no name. */
+	name: string,
 };
 
 /**  What the frontend receives when a command fails. */
@@ -172,7 +209,11 @@ export type AppError =
 /**  The operating system refused something (opening a file, for instance). */
 { kind: "system"; message: string } | 
 /**  GitHub, the keychain or the sign-in refused something. */
-{ kind: "gitHub"; message: string };
+{ kind: "gitHub"; message: string } | 
+/**  The model provider, or the keychain holding its key, refused something. */
+{ kind: "ai"; message: string } | 
+/**  The update of the application could not be found, checked or installed. */
+{ kind: "update"; message: string };
 
 /**  What changed: the history (refs, `HEAD`, index) or only the working tree. */
 export type ChangeKind = "history" | "workingTree";
@@ -194,6 +235,18 @@ export type CommitDetails = {
 	committer: Signature,
 	parents: string[],
 	files: FileChange[],
+};
+
+/**  The message a model proposes, ready for the two fields of the commit form. */
+export type CommitSuggestion = {
+	summary: string,
+	/**  Empty when the summary says it all. */
+	body: string,
+	/**
+	 *  Files whose diff was shortened or left out before asking; never
+	 *  silently, the user is told.
+	 */
+	shortenedFiles: number,
 };
 
 /**
@@ -351,6 +404,16 @@ export type OperationProgress = {
 	percent: number | null,
 };
 
+export type Provider = 
+/**  Anthropic's API, with a key. */
+"anthropic" | 
+/**  OpenAI's API, with a key. */
+"openai" | 
+/**  The `claude` program installed on the machine, with its own sign-in. */
+"claudecode" | 
+/**  The `codex` program installed on the machine, with its own sign-in. */
+"codex";
+
 export type PullRequest = {
 	number: number,
 	title: string,
@@ -379,6 +442,20 @@ export type RefInfo = {
 };
 
 export type RefKind = "localBranch" | "remoteBranch" | "tag";
+
+/**  A repository the account can reach, as offered for cloning. */
+export type RemoteRepository = {
+	/**  `owner/name`. */
+	fullName: string,
+	description: string,
+	private: boolean,
+	fork: boolean,
+	archived: boolean,
+	/**  The HTTPS address to clone from. */
+	cloneUrl: string,
+	/**  Seconds since the Unix epoch; 0 for a repository nothing was pushed to. */
+	pushedAt: number,
+};
 
 export type RepoInfo = {
 	name: string,
@@ -434,6 +511,12 @@ export type StatusEntry = {
 	/**  Previous path, for renames. */
 	oldPath: string | null,
 	status: FileStatus,
+};
+
+/**  How much of the update is downloaded; the installation follows. */
+export type UpdateProgress = {
+	/**  `None` when the server did not say how large the download is. */
+	percent: number | null,
 };
 
 export type WorkingTreeStatus = {

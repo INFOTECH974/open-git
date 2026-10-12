@@ -71,7 +71,7 @@ interface Props {
   active: boolean;
 }
 
-const LAYOUT_KEY = "gitui.layout";
+const LAYOUT_KEY = "open-git.layout";
 
 function loadLayout(): Record<string, number> | undefined {
   try {

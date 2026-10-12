@@ -5,7 +5,7 @@ import { fr } from "@/lib/locales/fr";
 
 export type Language = "en" | "fr";
 
-const KEY = "gitui.language";
+const KEY = "open-git.language";
 const DICTIONARIES: Record<Language, Record<string, string>> = { en: {}, fr };
 
 type Vars = Record<string, string | number>;

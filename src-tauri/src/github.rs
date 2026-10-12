@@ -1,9 +1,10 @@
 //! GitHub commands: the connected account and the pull requests and issues of
 //! the repository behind a tab's `origin` remote.
 
-use gitui_forge::{
+use open_git_forge::{
     Account, Comment, DeviceCode, DevicePoll, GitHub, GitHubRepo, Issue, ItemState, PullRequest,
-    clear_token, load_token, parse_github_url, poll_device, save_token, start_device_flow,
+    RemoteRepository, clear_token, load_token, parse_github_url, poll_device, save_token,
+    start_device_flow,
 };
 use serde::Serialize;
 use tauri::State;
@@ -14,8 +15,8 @@ use crate::{
 };
 
 /// The OAuth App this build signs in with; without it only tokens pasted by the
-/// user work. Set `GITUI_GITHUB_CLIENT_ID` when building.
-const CLIENT_ID: Option<&str> = option_env!("GITUI_GITHUB_CLIENT_ID");
+/// user work. Set `OPEN_GIT_GITHUB_CLIENT_ID` when building.
+const CLIENT_ID: Option<&str> = option_env!("OPEN_GIT_GITHUB_CLIENT_ID");
 
 /// One step of the device sign-in, as the UI sees it (the token itself never
 /// leaves the backend).
@@ -42,7 +43,7 @@ async fn sign_in(state: &AppState, token: &str) -> Result<Account> {
 fn session(state: &AppState) -> Result<GitHubSession> {
     state
         .github()
-        .ok_or_else(|| AppError::GitHub(gitui_forge::Error::SignedOut.to_string()))
+        .ok_or_else(|| AppError::GitHub(open_git_forge::Error::SignedOut.to_string()))
 }
 
 fn github_repo(state: &AppState, path: &str) -> Result<GitHubRepo> {
@@ -50,7 +51,7 @@ fn github_repo(state: &AppState, path: &str) -> Result<GitHubRepo> {
         .with_repo(path, |repo| repo.remote_url("origin"))?
         .ok_or_else(|| AppError::GitHub("this repository has no `origin` remote".to_owned()))?;
     parse_github_url(&url)
-        .ok_or_else(|| AppError::GitHub(gitui_forge::Error::NotGitHub { url }.to_string()))
+        .ok_or_else(|| AppError::GitHub(open_git_forge::Error::NotGitHub { url }.to_string()))
 }
 
 // ---- account --------------------------------------------------------------------
@@ -94,7 +95,7 @@ pub fn github_device_available() -> bool {
 #[specta::specta]
 pub async fn github_device_start() -> Result<DeviceCode> {
     let client_id =
-        CLIENT_ID.ok_or_else(|| AppError::GitHub(gitui_forge::Error::NoClientId.to_string()))?;
+        CLIENT_ID.ok_or_else(|| AppError::GitHub(open_git_forge::Error::NoClientId.to_string()))?;
     Ok(start_device_flow(client_id).await?)
 }
 
@@ -105,13 +106,20 @@ pub async fn github_device_poll(
     device_code: String,
 ) -> Result<DeviceStatus> {
     let client_id =
-        CLIENT_ID.ok_or_else(|| AppError::GitHub(gitui_forge::Error::NoClientId.to_string()))?;
+        CLIENT_ID.ok_or_else(|| AppError::GitHub(open_git_forge::Error::NoClientId.to_string()))?;
     Ok(match poll_device(client_id, &device_code).await? {
         DevicePoll::Pending => DeviceStatus::Pending,
         DevicePoll::SlowDown => DeviceStatus::SlowDown,
         DevicePoll::Failed(reason) => DeviceStatus::Failed(reason),
         DevicePoll::Token(token) => DeviceStatus::SignedIn(sign_in(&state, &token).await?),
     })
+}
+
+/// The repositories the connected account can clone, most recently pushed first.
+#[tauri::command]
+#[specta::specta]
+pub async fn github_repositories(state: State<'_, AppState>) -> Result<Vec<RemoteRepository>> {
+    Ok(session(&state)?.client.repositories().await?)
 }
 
 // ---- repository -----------------------------------------------------------------

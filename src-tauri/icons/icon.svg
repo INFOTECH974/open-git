@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7C5CFF"/>
+      <stop offset="1" stop-color="#2F6BFF"/>
+    </linearGradient>
+  </defs>
+  <!-- The tile, with the margin desktop icons keep around their shape. -->
+  <rect x="64" y="64" width="896" height="896" rx="208" fill="url(#background)"/>
+  <!-- A history: the trunk, and a branch leaving it. -->
+  <g fill="none" stroke="#FFFFFF" stroke-width="60" stroke-linecap="round">
+    <path d="M388 716 V308"/>
+    <path d="M388 600 C388 500 644 548 644 428"/>
+  </g>
+  <circle cx="388" cy="728" r="84" fill="#FFFFFF"/>
+  <circle cx="388" cy="296" r="84" fill="#FFFFFF"/>
+  <!-- The tip of the branch is left open: a ring, not a dot. -->
+  <circle cx="644" cy="344" r="62" fill="none" stroke="#FFFFFF" stroke-width="44"/>
+</svg>

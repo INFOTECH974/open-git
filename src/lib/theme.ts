@@ -1,6 +1,6 @@
 export type Theme = "system" | "light" | "dark";
 
-const KEY = "gitui.theme";
+const KEY = "open-git.theme";
 const THEMES: Theme[] = ["system", "light", "dark"];
 
 export function loadTheme(): Theme {

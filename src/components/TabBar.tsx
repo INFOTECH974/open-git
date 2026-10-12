@@ -18,17 +18,24 @@ interface Props {
   trailing?: ReactNode;
   /** Rendered at the far right, such as the theme switch. */
   end?: ReactNode;
+  /** The application name was clicked: its version and its updates. */
+  onAbout(): void;
 }
 
 /** The application header: one tab per open repository. */
-export function TabBar({ tabs, activePath, onActivate, onClose, trailing, end }: Props) {
+export function TabBar({ tabs, activePath, onActivate, onClose, trailing, end, onAbout }: Props) {
   const { t } = useI18n();
   return (
     <header className="flex h-10 shrink-0 items-center gap-2 border-b bg-muted/40 pr-2 pl-3 select-none">
-      <div className="flex shrink-0 items-center gap-2 text-sm font-semibold">
+      <button
+        type="button"
+        title={t("About Open GIT")}
+        className="-ml-1.5 flex shrink-0 items-center gap-2 rounded-md px-1.5 py-1 text-sm font-semibold outline-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50"
+        onClick={onAbout}
+      >
         <GitBranch className="size-4" aria-hidden />
-        gitui
-      </div>
+        Open GIT
+      </button>
       <div role="tablist" className="app-scroll flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
         {tabs.map((tab) => {
           const active = tab.path === activePath;

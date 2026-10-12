@@ -1,4 +1,4 @@
 # The GitHub OAuth App "Sign in with GitHub" goes through (device flow).
 # A client id is public: it identifies the application, it grants nothing.
 [env]
-GITUI_GITHUB_CLIENT_ID = "Ov23li70mGGt94soo2ps"
+OPEN_GIT_GITHUB_CLIENT_ID = "Ov23li70mGGt94soo2ps"

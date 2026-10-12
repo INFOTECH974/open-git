@@ -1,4 +1,4 @@
-const KEY = "gitui.recentRepositories";
+const KEY = "open-git.recentRepositories";
 const LIMIT = 8;
 
 export function loadRecent(): string[] {

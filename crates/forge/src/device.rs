@@ -45,7 +45,7 @@ pub enum DevicePoll {
 }
 
 fn client() -> Result<reqwest::Client> {
-    Ok(reqwest::Client::builder().user_agent("gitui").build()?)
+    Ok(reqwest::Client::builder().user_agent("open-git").build()?)
 }
 
 pub async fn start_device_flow(client_id: &str) -> Result<DeviceCode> {

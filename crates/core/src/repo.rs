@@ -58,6 +58,22 @@ pub struct RepoInfo {
     pub remotes: Vec<String>,
 }
 
+/// The tree of a commit without files: what the first commit is compared to.
+const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+/// How many commit subjects [`Repo::staged_changes`] reads from the history.
+const RECENT_SUBJECTS: usize = 15;
+
+/// The changes a commit would record, see [`Repo::staged_changes`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StagedChanges {
+    /// `git diff --name-status`: one `status<TAB>path` line per file.
+    pub files: String,
+    /// The patch of those files, renames detected.
+    pub patch: String,
+    /// Subjects of the latest commits reachable from `HEAD`, newest first.
+    pub recent_subjects: Vec<String>,
+}
+
 /// A `git` command that talks to a remote, prepared by a [`Repo`].
 ///
 /// It owns what it needs instead of borrowing the repository, so the caller can
@@ -154,13 +170,20 @@ impl Repo {
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| ".".to_owned());
-        exec::git_with_progress(
+        let existed = destination.exists();
+        let cloned = exec::git_with_progress(
             parent,
             &git_env,
             &["clone", "--progress", "--", url, &name],
             token,
             progress,
-        )?;
+        );
+        if matches!(cloned, Err(Error::Cancelled)) && !existed {
+            // Killed, `git` could not remove the directory it had started to fill,
+            // and the next attempt would find it in its way.
+            let _ = std::fs::remove_dir_all(destination);
+        }
+        cloned?;
         let mut repo = Self::open(destination)?;
         repo.git_env = git_env;
         Ok(repo)
@@ -393,6 +416,60 @@ impl Repo {
             .target()
             .map(|id| id.to_string())
             .unwrap_or_default())
+    }
+
+    /// What a commit made now would contain, as text: the input of a commit
+    /// message assistant. With `amend`, what the amended commit would contain.
+    pub fn staged_changes(&self, amend: bool) -> Result<StagedChanges> {
+        // An amended commit holds everything its parent lacks, staged or not yet.
+        let base = if amend {
+            let head = self.git.head()?.peel_to_commit()?;
+            Some(match head.parent_id(0) {
+                Ok(parent) => parent.to_string(),
+                Err(_) => EMPTY_TREE.to_owned(),
+            })
+        } else {
+            None
+        };
+        let diff = |format: &str| {
+            // `quotepath` would escape accented paths; `--no-ext-diff` and
+            // `--no-textconv` keep the user's diff tools out of the output.
+            let mut args = vec![
+                "-c",
+                "core.quotepath=off",
+                "diff",
+                "--cached",
+                "--no-color",
+                "--no-ext-diff",
+                "--no-textconv",
+                "-M",
+                format,
+            ];
+            if let Some(base) = &base {
+                args.push(base);
+            }
+            args.push("--");
+            self.run_git(&args, None).map(|output| output.stdout)
+        };
+        let files = diff("--name-status")?;
+        let patch = diff("--patch")?;
+
+        let mut recent_subjects = Vec::new();
+        // A repository without commits has no history to read, which is fine.
+        if let Ok(mut walk) = self.git.revwalk()
+            && walk.push_head().is_ok()
+        {
+            for id in walk.take(RECENT_SUBJECTS).flatten() {
+                if let Ok(commit) = self.git.find_commit(id) {
+                    recent_subjects.push(lossy(commit.summary_bytes().unwrap_or_default()));
+                }
+            }
+        }
+        Ok(StagedChanges {
+            files,
+            patch,
+            recent_subjects,
+        })
     }
 
     // ---- branches -------------------------------------------------------------

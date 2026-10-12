@@ -1,4 +1,4 @@
-//! Thin Tauri commands over `gitui_core`.
+//! Thin Tauri commands over `open_git_core`.
 //!
 //! Every command is `async` so it runs off the main thread: a synchronous command
 //! would block the webview while libgit2 reads the repository or `git` talks to a
@@ -6,7 +6,7 @@
 
 use std::time::Duration;
 
-use gitui_core::{
+use open_git_core::{
     CommitDetails, ConflictSide, FileContents, FileDiff, GraphRow, RefInfo, RefKind, RemoteCommand,
     Repo, RepoInfo, StashEntry, WorkingTreeStatus,
 };
@@ -553,7 +553,7 @@ fn run_remote(
     state: &AppState,
     path: &str,
     operation: &'static str,
-    prepare: impl FnOnce(&Repo) -> gitui_core::Result<RemoteCommand>,
+    prepare: impl FnOnce(&Repo) -> open_git_core::Result<RemoteCommand>,
 ) -> Result<()> {
     let command = state.with_repo(path, |repo| prepare(repo))?;
     let result = state.with_operation(path, |token| {

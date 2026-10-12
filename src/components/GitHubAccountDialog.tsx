@@ -19,7 +19,7 @@ import { useGitHub } from "@/lib/github";
 import { useI18n } from "@/lib/i18n";
 
 const TOKEN_URL =
-  "https://github.com/settings/tokens/new?scopes=repo,read:user&description=gitui";
+  "https://github.com/settings/tokens/new?scopes=repo,read:user&description=Open%20GIT";
 
 /** Sign in to GitHub with a token or through github.com, or sign out. */
 export function GitHubAccountDialog() {

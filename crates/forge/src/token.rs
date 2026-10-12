@@ -1,11 +1,11 @@
 //! The GitHub token lives in the operating system's credential store and is
-//! never written to disk by gitui itself.
+//! never written to disk by Open GIT itself.
 
 use keyring::Entry;
 
 use crate::Result;
 
-const SERVICE: &str = "gitui";
+const SERVICE: &str = "open-git";
 const ACCOUNT: &str = "github.com";
 
 fn entry() -> Result<Entry> {

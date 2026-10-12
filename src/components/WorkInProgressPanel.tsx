@@ -1,4 +1,4 @@
-import { type ComponentType, type KeyboardEvent, type ReactNode, useEffect, useState } from "react";
+import { type ComponentType, type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import {
   Archive,
   Copy,
@@ -9,6 +9,7 @@ import {
   LoaderCircle,
   Minus,
   Plus,
+  Sparkles,
   Undo2,
 } from "lucide-react";
 
@@ -29,7 +30,8 @@ import {
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import type { Operation } from "@/hooks/useRepository";
-import { api } from "@/lib/api";
+import { modelLabel, useAi } from "@/lib/ai";
+import { api, errorMessage } from "@/lib/api";
 import { joinPath, splitPath } from "@/lib/format";
 import { useI18n } from "@/lib/i18n";
 import { ignoreChoices } from "@/lib/ignore";
@@ -101,6 +103,45 @@ export function WorkInProgressPanel({
   const canCommit =
     (status.staged.length > 0 || amend) && summary.trim().length > 0 && !busy && author !== null;
 
+  // The assistant: a model writes the message from what is staged.
+  const ai = useAi();
+  const [generating, setGenerating] = useState(false);
+  const [assistance, setAssistance] = useState<{ text: string; failed: boolean } | null>(null);
+  // An answer to a request that was dropped since (a newer one, a commit) is ignored.
+  const request = useRef(0);
+  const model = ai.settings.models[ai.settings.provider];
+
+  const generate = async () => {
+    if (!ai.ready) {
+      ai.openDialog();
+      return;
+    }
+    const id = ++request.current;
+    setGenerating(true);
+    setAssistance(null);
+    try {
+      const suggestion = await api.aiCommitMessage(repoPath, ai.settings.provider, model, amend);
+      if (request.current !== id) return;
+      setSummary(suggestion.summary);
+      setDescription(suggestion.body);
+      if (suggestion.shortenedFiles > 0) {
+        setAssistance({
+          text:
+            suggestion.shortenedFiles === 1
+              ? t("1 large or generated file was sent without its full diff; check that the message covers it.")
+              : t("{n} large or generated files were sent without their full diff; check that the message covers them.", {
+                  n: suggestion.shortenedFiles,
+                }),
+          failed: false,
+        });
+      }
+    } catch (failure) {
+      if (request.current === id) setAssistance({ text: errorMessage(failure), failed: true });
+    } finally {
+      if (request.current === id) setGenerating(false);
+    }
+  };
+
   // Amending starts from the message of the commit being replaced.
   useEffect(() => {
     if (!amend || !headId) return;
@@ -126,6 +167,9 @@ export function WorkInProgressPanel({
       ? `${summary.trim()}\n\n${description.trim()}\n`
       : `${summary.trim()}\n`;
     if (await onCommit(message, amend)) {
+      request.current++;
+      setGenerating(false);
+      setAssistance(null);
       setSummary("");
       setDescription("");
       setAmend(false);
@@ -264,15 +308,34 @@ export function WorkInProgressPanel({
           void commit();
         }}
       >
-        <input
-          className="h-8 w-full rounded-md border bg-background px-2 text-sm outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
-          placeholder={t("Summary")}
-          value={summary}
-          onChange={(event) => setSummary(event.target.value)}
-          onKeyDown={submitOnCtrlEnter}
-          maxLength={200}
-          aria-label={t("Commit summary")}
-        />
+        <div className="flex gap-1.5">
+          <input
+            className="h-8 w-full min-w-0 rounded-md border bg-background px-2 text-sm outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+            placeholder={t("Summary")}
+            value={summary}
+            onChange={(event) => setSummary(event.target.value)}
+            onKeyDown={submitOnCtrlEnter}
+            maxLength={200}
+            aria-label={t("Commit summary")}
+          />
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className="shrink-0"
+            // Not set up yet: the button leads to the settings, whatever is staged.
+            disabled={ai.ready && (generating || busy || (status.staged.length === 0 && !amend))}
+            onClick={() => void generate()}
+            aria-label={t("Write the message with AI")}
+            title={
+              ai.ready
+                ? t("Write the message from the staged changes with {model}", { model: modelLabel(ai.settings) })
+                : t("Set up the commit message assistant")
+            }
+          >
+            {generating ? <LoaderCircle className="animate-spin" /> : <Sparkles />}
+          </Button>
+        </div>
         <textarea
           className="min-h-16 w-full resize-y rounded-md border bg-background px-2 py-1.5 text-sm outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
           placeholder={t("Description (optional)")}
@@ -281,6 +344,14 @@ export function WorkInProgressPanel({
           onKeyDown={submitOnCtrlEnter}
           aria-label={t("Commit description")}
         />
+        {assistance && (
+          <p
+            className={cn("text-xs break-words", assistance.failed ? "text-destructive" : "text-muted-foreground")}
+            role={assistance.failed ? "alert" : "status"}
+          >
+            {assistance.text}
+          </p>
+        )}
         <div className="flex items-center gap-2">
           <Checkbox
             id="amend"

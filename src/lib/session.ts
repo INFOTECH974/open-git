@@ -1,4 +1,4 @@
-const KEY = "gitui.session";
+const KEY = "open-git.session";
 
 /** The tabs that were open when the application last ran. */
 export interface SavedSession {

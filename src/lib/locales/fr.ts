@@ -25,6 +25,20 @@ export const fr: Record<string, string> = {
   "Clone": "Cloner",
   "Cloning into": "Clonage dans",
   "Cancel the clone": "Annuler le clone",
+  "Cloning {name}…": "Clonage de {name}…",
+  "Contacting the server…": "Connexion au serveur…",
+  "Hide": "Masquer",
+  "Your GitHub repositories": "Vos dépôts GitHub",
+  "Reload the list": "Recharger la liste",
+  "Filter by name or description": "Filtrer par nom ou description",
+  "Loading your repositories…": "Chargement de vos dépôts…",
+  "This account has no repository yet.": "Ce compte n'a encore aucun dépôt.",
+  "No repository matches the filter.": "Aucun dépôt ne correspond au filtre.",
+  "Connect a GitHub account to pick from your repositories.":
+    "Connectez un compte GitHub pour choisir parmi vos dépôts.",
+  "Connect": "Connecter",
+  "Private": "Privé",
+  "Archived": "Archivé",
   "Create a repository": "Créer un dépôt",
   "Runs git init in the folder; an existing folder is kept as it is.":
     "Lance git init dans le dossier ; un dossier existant est conservé tel quel.",
@@ -323,4 +337,59 @@ export const fr: Record<string, string> = {
   "Markdown is fine.": "Le Markdown est accepté.",
   "Close #{n}?": "Fermer #{n} ?",
   "Close the issue": "Fermer l'issue",
+  // ---- commit message assistant ---------------------------------------------
+  "Commit message assistant": "Assistant de message de commit",
+  "Commit message assistant: {model}": "Assistant de message de commit : {model}",
+  "Set up the commit message assistant": "Configurer l'assistant de message de commit",
+  "A language model reads the staged changes and proposes the commit message: through Claude Code or Codex when they are installed, or with your own API key.":
+    "Un modèle de langage lit les modifications indexées et propose le message de commit : par Claude Code ou Codex s'ils sont installés, ou avec votre propre clé d'API.",
+  "Ready to use": "Prêt à l'emploi",
+  "is installed. It writes the messages with the account it is signed in to: no key to give.":
+    "est installé. Il rédige les messages avec le compte auquel il est connecté : aucune clé à fournir.",
+  "was not found on this computer. Install {name}, sign in from a terminal, then look again.":
+    "est introuvable sur cet ordinateur. Installez {name}, connectez-vous depuis un terminal, puis cherchez à nouveau.",
+  "How to install {name}": "Comment installer {name}",
+  "Look again": "Chercher à nouveau",
+  "The default of {name}": "Celui par défaut de {name}",
+  "Asking for a message sends the staged diff to the model {name} uses; nothing is sent before you ask.":
+    "Demander un message envoie le diff indexé au modèle qu'utilise {name} ; rien n'est envoyé avant votre demande.",
+  "Provider": "Fournisseur",
+  "An API key is stored in the system keychain.": "Une clé d'API est conservée dans le trousseau du système.",
+  "Remove": "Retirer",
+  "Model": "Modèle",
+  "Choose a model…": "Choisir un modèle…",
+  "API key": "Clé d'API",
+  "The key is kept in the system keychain, never in a file.":
+    "La clé est conservée dans le trousseau du système, jamais dans un fichier.",
+  "Create one": "En créer une",
+  "Asking for a message sends the staged diff to {provider}; nothing is sent before you ask.":
+    "Demander un message envoie le diff indexé à {provider} ; rien n'est envoyé avant votre demande.",
+  "Close": "Fermer",
+  "Save the key": "Enregistrer la clé",
+  "Write the message with AI": "Rédiger le message avec l'IA",
+  "Write the message from the staged changes with {model}":
+    "Rédiger le message à partir des modifications indexées avec {model}",
+  "1 large or generated file was sent without its full diff; check that the message covers it.":
+    "1 fichier volumineux ou généré a été envoyé sans son diff complet ; vérifiez que le message en tient compte.",
+  "{n} large or generated files were sent without their full diff; check that the message covers them.":
+    "{n} fichiers volumineux ou générés ont été envoyés sans leur diff complet ; vérifiez que le message en tient compte.",
+  // ---- updates of the application ----------------------------------------------
+  "About Open GIT": "À propos d'Open GIT",
+  "Version {version}": "Version {version}",
+  "Update": "Mettre à jour",
+  "Update available": "Mise à jour disponible",
+  "Open GIT {version} is available": "Open GIT {version} est disponible",
+  "Open GIT {version} can be installed; this is version {current}.":
+    "Open GIT {version} peut être installé ; vous utilisez la version {current}.",
+  "The update is downloaded from the GitHub release, checked against the signature of Open GIT, then the application restarts. Your open repositories come back.":
+    "La mise à jour est téléchargée depuis la release GitHub, vérifiée avec la signature d'Open GIT, puis l'application redémarre. Vos dépôts ouverts sont rétablis.",
+  "What changed in {version}": "Nouveautés de la version {version}",
+  "Looking for a newer version…": "Recherche d'une version plus récente…",
+  "Open GIT is up to date.": "Open GIT est à jour.",
+  "Downloading the update…": "Téléchargement de la mise à jour…",
+  "Downloading the update… {percent}%": "Téléchargement de la mise à jour… {percent} %",
+  "Installing; the application is about to restart…": "Installation ; l'application va redémarrer…",
+  "Later": "Plus tard",
+  "Install and restart": "Installer et redémarrer",
+  "Check for updates": "Rechercher des mises à jour",
 };

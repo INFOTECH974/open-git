@@ -49,7 +49,7 @@ const MODES: { value: ViewMode; label: string; hint: string }[] = [
 
 function loadMode(key: string, fallback: ViewMode): ViewMode {
   try {
-    const stored = localStorage.getItem(`gitui.diffMode.${key}`);
+    const stored = localStorage.getItem(`open-git.diffMode.${key}`);
     return MODES.some((mode) => mode.value === stored) ? (stored as ViewMode) : fallback;
   } catch {
     return fallback;
@@ -75,7 +75,7 @@ export function FileDiffView({
   const [wrap, setWrap] = useState(false);
   useEffect(() => {
     try {
-      localStorage.setItem(`gitui.diffMode.${modeKey}`, mode);
+      localStorage.setItem(`open-git.diffMode.${modeKey}`, mode);
     } catch {
       // Storage may be unavailable; the choice then lasts for this session.
     }

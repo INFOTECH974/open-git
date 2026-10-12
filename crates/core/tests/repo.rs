@@ -13,7 +13,7 @@
 use std::{fs, path::Path};
 
 use git2::{Oid, Repository, RepositoryInitOptions, Signature, Time};
-use gitui_core::{DiffLineKind, Error, FileStatus, HeadInfo, LaneRef, RefKind, Repo};
+use open_git_core::{DiffLineKind, Error, FileStatus, HeadInfo, LaneRef, RefKind, Repo};
 use tempfile::TempDir;
 
 const T0: i64 = 1_700_000_000;

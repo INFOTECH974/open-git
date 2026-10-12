@@ -1,4 +1,4 @@
-//! Git operations for gitui, independent of any UI framework.
+//! Git operations for Open GIT, independent of any UI framework.
 //!
 //! Reading (history, refs, diffs, status, staging) goes through libgit2; writing
 //! history and talking to remotes (commit, checkout, merge, fetch, pull, push)
@@ -23,7 +23,7 @@ pub use exec::{ASKPASS_ENV, CancelToken, set_askpass};
 pub use graph::{GraphRow, LaneRef, RowLayout};
 pub use ops::{ConflictSide, RepoState, StashEntry};
 pub use refs::{RefInfo, RefKind};
-pub use repo::{HeadInfo, Identity, Progress, RemoteCommand, Repo, RepoInfo};
+pub use repo::{HeadInfo, Identity, Progress, RemoteCommand, Repo, RepoInfo, StagedChanges};
 pub use status::{StatusEntry, WorkingTreeStatus};
 
 /// Git stores names, messages and paths as bytes; the UI only deals in strings.

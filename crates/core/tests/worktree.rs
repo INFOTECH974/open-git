@@ -7,7 +7,7 @@
 use std::{ffi::OsString, fs, path::Path, process::Command, time::Duration};
 
 use git2::{IndexAddOption, Oid, Repository, RepositoryInitOptions, Signature, Time};
-use gitui_core::{
+use open_git_core::{
     ConflictSide, DiffLineKind, Error, FileStatus, RefKind, Repo, RepoState, StatusEntry,
 };
 use tempfile::TempDir;
@@ -325,6 +325,38 @@ fn commit_runs_git_and_refreshes_the_history() {
     assert_eq!(details.parents, [fixture.initial.to_string()]);
     assert!(repo.status().unwrap().is_clean());
     assert_eq!(repo.commit_count().unwrap(), 2);
+}
+
+#[test]
+fn staged_changes_describe_the_commit_to_come() {
+    let fixture = Fixture::new();
+    fixture.write("README.md", "hello\nworld\n");
+    fixture.write("été.txt", "soleil\n");
+    fixture.write("left-out.txt", "not staged\n");
+    let mut repo = fixture.repo();
+    repo.stage(&["README.md".into(), "été.txt".into()]).unwrap();
+
+    let changes = repo.staged_changes(false).unwrap();
+    assert_eq!(changes.files, "M\tREADME.md\nA\tété.txt\n");
+    assert!(changes.patch.contains("diff --git a/README.md b/README.md"));
+    assert!(changes.patch.contains("+world"));
+    assert!(!changes.patch.contains("left-out.txt"));
+    assert_eq!(changes.recent_subjects, ["Initial commit"]);
+
+    // Amending the only commit: everything it holds, plus what is staged.
+    let amended = repo.staged_changes(true).unwrap();
+    assert!(amended.files.contains("A\tlib.rs\n"));
+    assert!(amended.files.contains("A\tREADME.md\n"));
+
+    repo.commit("Say hello to the world\n", false).unwrap();
+    assert_eq!(repo.staged_changes(false).unwrap().files, "");
+    // Amending a commit with a parent: only what that commit changed.
+    let amended = repo.staged_changes(true).unwrap();
+    assert_eq!(amended.files, "M\tREADME.md\nA\tété.txt\n");
+    assert_eq!(
+        amended.recent_subjects,
+        ["Say hello to the world", "Initial commit"]
+    );
 }
 
 #[test]
@@ -926,7 +958,7 @@ fn init_and_clone_create_usable_repositories() {
 fn cancelling_stops_a_command_that_is_running() {
     use std::{thread, time::Instant};
 
-    use gitui_core::CancelToken;
+    use open_git_core::CancelToken;
 
     let dir = tempfile::tempdir().unwrap();
     let env = git_env(dir.path());
@@ -961,11 +993,36 @@ fn cancelling_stops_a_command_that_is_running() {
         "cancelling took {:?}",
         started.elapsed()
     );
+
+    // A cancelled clone leaves nothing behind, so it can be started again.
+    // Here the "SSH connection" to the server is what sleeps.
+    let mut slow = env.clone();
+    slow.push(("GIT_SSH_COMMAND".into(), "sleep 30 #".into()));
+    let abandoned = dir.path().join("abandoned");
+    let token = CancelToken::new();
+    let result = thread::scope(|scope| {
+        let running = scope.spawn(|| {
+            Repo::clone_with_progress(
+                "ssh://localhost/nowhere.git",
+                &abandoned,
+                slow,
+                &token,
+                &mut |_| {},
+            )
+        });
+        thread::sleep(Duration::from_millis(1500));
+        assert!(abandoned.exists(), "the clone had started");
+        token.cancel();
+        running.join().unwrap().map(|_| ())
+    });
+    assert!(matches!(result, Err(Error::Cancelled)), "{result:?}");
+    assert!(!abandoned.exists());
+    Repo::clone(&url, &abandoned, env).unwrap();
 }
 
 #[test]
 fn network_operations_report_progress_and_honour_cancellation() {
-    use gitui_core::CancelToken;
+    use open_git_core::CancelToken;
 
     let dir = tempfile::tempdir().unwrap();
     let env = git_env(dir.path());

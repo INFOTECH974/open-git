@@ -2,6 +2,12 @@ name: Release
 
 # Pushing a tag such as `v0.1.0` builds the installers for every platform and
 # attaches them to a draft GitHub release, to be reviewed and published by hand.
+#
+# The release also carries what the installed copies update from: each
+# installer signed with `TAURI_SIGNING_PRIVATE_KEY` (a repository secret; its
+# public half is in `tauri.conf.json`) and `latest.json`, which the application
+# reads at `releases/latest/download/latest.json`. That address only follows
+# published releases: the update reaches the users once the draft is published.
 on:
   push:
     tags: ["v*"]
@@ -13,8 +19,24 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  version:
+    name: Tag matches the version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # An installed copy compares its own version with the one of `latest.json`,
+      # both taken from `tauri.conf.json`: a tag without the bump updates nobody.
+      - name: The tag is the version of tauri.conf.json
+        run: |
+          version="v$(jq -r .version src-tauri/tauri.conf.json)"
+          if [ "$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::The tag is $GITHUB_REF_NAME but src-tauri/tauri.conf.json says $version."
+            exit 1
+          fi
+
   build:
     name: Installer (${{ matrix.name }})
+    needs: version
     strategy:
       fail-fast: false
       matrix:
@@ -61,13 +83,15 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Optional: bakes the OAuth client id of the GitHub App into the build
-          # so "Sign in with GitHub" is offered (a personal token always works).
-          GITUI_GITHUB_CLIENT_ID: ${{ secrets.GITUI_GITHUB_CLIENT_ID }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          # Must be set even when the key has no password, or the build asks for one.
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: "gitui ${{ github.ref_name }}"
+          releaseName: "Open GIT ${{ github.ref_name }}"
           releaseBody: "See the assets below for the installers."
           releaseDraft: true
           prerelease: false
+          # Windows gets two installers; `latest.json` points to the NSIS one.
+          updaterJsonPreferNsis: true
           args: ${{ matrix.args }}

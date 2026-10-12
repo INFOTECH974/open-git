@@ -1,6 +1,6 @@
 [package]
-name = "gitui-forge"
-description = "Pull requests and issues on GitHub for gitui"
+name = "open-git-forge"
+description = "Pull requests and issues on GitHub for Open GIT"
 version.workspace = true
 edition.workspace = true
 
@@ -26,3 +26,7 @@ serde.workspace = true
 serde_json = "1"
 specta = { workspace = true, optional = true }
 thiserror = "2"
+
+[dev-dependencies]
+# The `repositories` example needs a runtime to call the API.
+tokio = { version = "1", features = ["macros", "rt"] }

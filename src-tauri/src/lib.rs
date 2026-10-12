@@ -1,11 +1,14 @@
+mod ai;
 mod askpass;
 mod commands;
 mod error;
 mod github;
 mod progress;
 mod state;
+mod update;
 mod watcher;
 
+#[cfg(debug_assertions)]
 use specta_typescript::Typescript;
 use tauri_specta::{Builder, collect_commands, collect_events};
 
@@ -83,6 +86,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             github::github_device_available,
             github::github_device_start,
             github::github_device_poll,
+            github::github_repositories,
             github::github_repository,
             github::github_pull_requests,
             github::github_create_pull_request,
@@ -91,10 +95,20 @@ fn specta_builder() -> Builder<tauri::Wry> {
             github::github_issue_comments,
             github::github_comment_issue,
             github::github_close_issue,
+            // commit message assistant
+            ai::ai_providers,
+            ai::ai_save_key,
+            ai::ai_clear_key,
+            ai::ai_models,
+            ai::ai_commit_message,
+            // updates of the application
+            update::update_check,
+            update::update_install,
         ])
         .events(collect_events![
             watcher::RepositoryChanged,
-            progress::OperationProgress
+            progress::OperationProgress,
+            update::UpdateProgress
         ])
         // Timestamps are `i64` seconds; they fit in a JavaScript number.
         .dangerously_cast_bigints_to_number()
@@ -131,6 +145,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState::default())
         .invoke_handler(builder.invoke_handler())
         .setup(move |app| {

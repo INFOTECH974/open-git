@@ -15,7 +15,7 @@ use std::{
 use crate::{Error, Result, lossy};
 
 /// The environment variable that tells [`ASKPASS`] why it was started.
-pub const ASKPASS_ENV: &str = "GITUI_ASKPASS";
+pub const ASKPASS_ENV: &str = "OPEN_GIT_ASKPASS";
 
 static ASKPASS: OnceLock<PathBuf> = OnceLock::new();
 

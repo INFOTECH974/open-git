@@ -3,8 +3,8 @@ use std::{
     sync::{Arc, Mutex, MutexGuard},
 };
 
-use gitui_core::{CancelToken, Repo};
-use gitui_forge::{Account, GitHub};
+use open_git_core::{CancelToken, Repo};
+use open_git_forge::{Account, GitHub};
 use tauri::AppHandle;
 
 use crate::{
@@ -50,7 +50,7 @@ impl AppState {
             Ok(watcher) => {
                 lock(&self.watchers).insert(path, watcher);
             }
-            Err(error) => eprintln!("gitui: cannot watch {path}: {error}"),
+            Err(error) => eprintln!("open-git: cannot watch {path}: {error}"),
         }
     }
 
@@ -63,7 +63,7 @@ impl AppState {
     pub fn with_repo<T>(
         &self,
         path: &str,
-        f: impl FnOnce(&mut Repo) -> gitui_core::Result<T>,
+        f: impl FnOnce(&mut Repo) -> open_git_core::Result<T>,
     ) -> Result<T> {
         // The map lock is released at the end of this statement.
         let repo = lock(&self.repos)

@@ -11,8 +11,10 @@ import { mockIPC } from "@tauri-apps/api/mocks";
 
 import type {
   Account,
+  AiModel,
   AppError,
   CommitDetails,
+  CommitSuggestion,
   DiffLine,
   FileChange,
   FileContents,
@@ -21,7 +23,9 @@ import type {
   GraphRow,
   Issue,
   LaneRef,
+  Provider,
   PullRequest,
+  RemoteRepository,
   RefInfo,
   RefKind,
   RepoInfo,
@@ -483,6 +487,32 @@ const githubAccount: Account = {
 };
 let nextIssueNumber = 120;
 const now = Math.floor(Date.now() / 1000);
+/**
+ * What the account can clone: its own repositories, a collaboration, an
+ * organisation's. Most recently pushed first, as GitHub sends them.
+ */
+const remoteRepositories: RemoteRepository[] = [
+  ["ada/mock-repo", "A visual Git client", false, false, false, 2],
+  ["analytical-society/website", "Public site of the society", false, false, false, 5],
+  ["analytical-society/billing", "Invoices and subscriptions", true, false, false, 12],
+  ["ada/analytical-engine", "Notes on the engine, with the first program", true, false, false, 30],
+  ["analytical-society/infrastructure", "Servers, deployments and backups", true, false, false, 50],
+  ["babbage/difference-engine", "Tabulating polynomial functions", false, false, false, 90],
+  ["ada/dotfiles", "", true, false, false, 300],
+  ["analytical-society/design-system", "Shared components", true, false, false, 400],
+  ["analytical-society/mobile-app", "", true, false, false, 700],
+  ["analytical-society/handbook", "How we work", false, false, false, 1500],
+  ["ada/linux", "Linux kernel source tree", false, true, false, 2000],
+  ["babbage/punch-cards", "", true, false, true, 9000],
+].map(([fullName, description, isPrivate, fork, archived, hoursAgo]) => ({
+  fullName: String(fullName),
+  description: String(description),
+  private: Boolean(isPrivate),
+  fork: Boolean(fork),
+  archived: Boolean(archived),
+  cloneUrl: `https://github.com/${String(fullName)}.git`,
+  pushedAt: now - Number(hoursAgo) * 3600,
+}));
 const pullRequests: PullRequest[] = [
   { number: 118, title: "Speed up lane assignment", body: "", state: "open", draft: false, merged: false, author: "grace", head: "feature/graph-14", base: "main", htmlUrl: "https://github.com/ada/mock-repo/pull/118", createdAt: now - 86400 * 2, updatedAt: now - 3600 * 5 },
   { number: 115, title: "Document the refs panel", body: "", state: "open", draft: true, merged: false, author: "linus", head: "feature/refs-21", base: "main", htmlUrl: "https://github.com/ada/mock-repo/pull/115", createdAt: now - 86400 * 4, updatedAt: now - 86400 },
@@ -500,6 +530,61 @@ function githubError(message: string): AppError {
 
 function requireSignedIn(): void {
   if (!githubSignedIn) throw githubError("no GitHub account is connected");
+}
+
+// ---- commit message assistant, faked ---------------------------------------------
+
+const aiKeys = new Set<Provider>();
+// `claude` is installed from the start; `codex` only appears once the settings
+// dialog was asked to look again (the start-up and the dialog look first).
+let aiLooks = 0;
+const aiModels: Record<Provider, AiModel[]> = {
+  claudecode: ["opus", "sonnet", "haiku", "fable"].map((id) => ({ id, name: id })),
+  codex: [],
+  anthropic: [
+    { id: "claude-opus-5-5", name: "Claude Opus 5.5" },
+    { id: "claude-sonnet-5-5", name: "Claude Sonnet 5.5" },
+    { id: "claude-haiku-5-5", name: "Claude Haiku 5.5" },
+  ],
+  openai: [
+    { id: "gpt-mock-large", name: "gpt-mock-large" },
+    { id: "gpt-mock-mini", name: "gpt-mock-mini" },
+  ],
+};
+
+function aiError(message: string): AppError {
+  return { kind: "ai", message };
+}
+
+/** A message a model could have written for what is staged in `repo`. */
+function suggestMessage(repo: MockRepo, amend: boolean): CommitSuggestion {
+  const staged = repo.status.staged;
+  if (staged.length === 0 && !amend) throw aiError("there is no staged change to describe");
+  const names = staged.map((entry) => entry.path.split("/").pop() ?? entry.path);
+  if (names.length === 0) return { summary: "Reword the last commit", body: "", shortenedFiles: 0 };
+  const summary = names.length === 1 ? `Update ${names[0]}` : `Update ${names[0]} and ${names.length - 1} more`;
+  const body =
+    names.length > 1
+      ? `Touches ${names.slice(0, 4).join(", ")}${names.length > 4 ? "…" : ""}.
+Written by the mock assistant.`
+      : "";
+  return { summary, body, shortenedFiles: names.some((name) => name.endsWith(".lock")) ? 1 : 0 };
+}
+
+// ---- updates of the application, faked --------------------------------------------
+
+const APP_VERSION = "0.1.0";
+// The start-up look and the first "Check for updates" find nothing; the
+// release appears on the next one.
+let updateLooks = 0;
+
+/** Plays the download of the update, then fails: there is nothing to restart into. */
+async function installUpdate(): Promise<never> {
+  for (const percent of [null, 0, 12, 31, 54, 78, 93, 100]) {
+    await emitEvent("update-progress", { percent });
+    await new Promise((resolve) => setTimeout(resolve, 350));
+  }
+  throw { kind: "update", message: "the mock backend has no installer to run" } satisfies AppError;
 }
 
 /** The three shapes `ignoreChoices` produces: `/file`, `*.ext` and `/folder/`. */
@@ -573,6 +658,12 @@ function handle(command: string, args: Record<string, unknown>): unknown {
     // Tauri internals the frontend uses: the folder dialog and the event system.
     case "plugin:dialog|open":
       return DIALOG_PATHS[dialogCalls++ % DIALOG_PATHS.length];
+    case "plugin:app|version":
+      return APP_VERSION;
+    case "update_check":
+      return delayed(++updateLooks > 2 ? "0.2.0" : null, 600);
+    case "update_install":
+      return installUpdate();
     case "cancel_operation":
       cancelled.add(path);
       return true;
@@ -594,7 +685,7 @@ function handle(command: string, args: Record<string, unknown>): unknown {
       return refs();
     case "open_in_editor":
     case "reveal_in_file_manager":
-      console.info(`[gitui] mock: ${command} ${String(args.file)}`);
+      console.info(`[open-git] mock: ${command} ${String(args.file)}`);
       return null;
 
     // history
@@ -897,6 +988,9 @@ function handle(command: string, args: Record<string, unknown>): unknown {
     case "github_device_start":
     case "github_device_poll":
       throw githubError("GitHub sign-in is not configured for this build (no OAuth client id)");
+    case "github_repositories":
+      if (!githubSignedIn) throw githubError("no GitHub account is connected");
+      return delayed(remoteRepositories, 500);
     case "github_repository":
       return { owner: "ada", name: path.split("/").pop() ?? "mock-repo" };
     case "github_pull_requests":
@@ -964,6 +1058,32 @@ function handle(command: string, args: Record<string, unknown>): unknown {
       issue.state = "closed";
       return issue;
     }
+    // commit message assistant
+    case "ai_providers":
+      return [...aiKeys, "claudecode", ...(++aiLooks > 3 ? ["codex"] : [])];
+    case "ai_save_key": {
+      const provider = args.provider as Provider;
+      if (String(args.key).trim().length < 4) {
+        throw aiError(`${provider === "openai" ? "OpenAI" : "Anthropic"} refused the request (401): invalid x-api-key`);
+      }
+      aiKeys.add(provider);
+      return delayed(aiModels[provider], 400);
+    }
+    case "ai_clear_key":
+      aiKeys.delete(args.provider as Provider);
+      return null;
+    case "ai_models":
+      return delayed(aiModels[args.provider as Provider], 400);
+    case "ai_commit_message":
+      if (args.provider === "codex") {
+        return delayed(null, 800).then(() => {
+          throw aiError("`codex` failed: The model is not supported when using Codex with a ChatGPT account.");
+        });
+      }
+      if (args.provider !== "claudecode" && !aiKeys.has(args.provider as Provider)) {
+        throw aiError("no API key is stored");
+      }
+      return delayed(suggestMessage(repoAt(path), Boolean(args.amend)), 1200);
     default:
       throw new Error(`mock backend: unknown command ${command}`);
   }
@@ -975,4 +1095,4 @@ mockIPC(
   { shouldMockEvents: true },
 );
 
-console.info(`[gitui] mock backend active: ${rows.length} commits, ${refs().length} refs`);
+console.info(`[open-git] mock backend active: ${rows.length} commits, ${refs().length} refs`);

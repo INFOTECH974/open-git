@@ -1,10 +1,10 @@
 //! Prints what the UI would receive for a repository, as JSON.
 //!
 //! ```text
-//! cargo run -p gitui-core --example dump -- path/to/repo [rows]
+//! cargo run -p open-git-core --example dump -- path/to/repo [rows]
 //! ```
 
-use gitui_core::Repo;
+use open_git_core::Repo;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);

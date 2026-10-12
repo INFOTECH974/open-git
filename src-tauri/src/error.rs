@@ -14,19 +14,35 @@ pub enum AppError {
     System(String),
     /// GitHub, the keychain or the sign-in refused something.
     GitHub(String),
+    /// The model provider, or the keychain holding its key, refused something.
+    Ai(String),
+    /// The update of the application could not be found, checked or installed.
+    Update(String),
 }
 
-impl From<gitui_core::Error> for AppError {
-    fn from(error: gitui_core::Error) -> Self {
+impl From<tauri_plugin_updater::Error> for AppError {
+    fn from(error: tauri_plugin_updater::Error) -> Self {
+        Self::Update(error.to_string())
+    }
+}
+
+impl From<open_git_ai::Error> for AppError {
+    fn from(error: open_git_ai::Error) -> Self {
+        Self::Ai(error.to_string())
+    }
+}
+
+impl From<open_git_core::Error> for AppError {
+    fn from(error: open_git_core::Error) -> Self {
         match error {
-            gitui_core::Error::Cancelled => Self::Cancelled(error.to_string()),
+            open_git_core::Error::Cancelled => Self::Cancelled(error.to_string()),
             _ => Self::Git(error.to_string()),
         }
     }
 }
 
-impl From<gitui_forge::Error> for AppError {
-    fn from(error: gitui_forge::Error) -> Self {
+impl From<open_git_forge::Error> for AppError {
+    fn from(error: open_git_forge::Error) -> Self {
         Self::GitHub(error.to_string())
     }
 }

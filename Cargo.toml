@@ -7,8 +7,9 @@ version = "0.1.0"
 edition = "2024"
 
 [workspace.dependencies]
-gitui-core = { path = "crates/core" }
-gitui-forge = { path = "crates/forge" }
+open-git-ai = { path = "crates/ai" }
+open-git-core = { path = "crates/core" }
+open-git-forge = { path = "crates/forge" }
 serde = { version = "1", features = ["derive"] }
 specta = { version = "=2.0.0-rc.25", features = ["derive"] }
 

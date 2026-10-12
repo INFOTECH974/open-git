@@ -4,6 +4,7 @@ import {
   type AppError,
   type ConflictSide,
   type ItemState,
+  type Provider,
   type RefKind,
 } from "@/bindings";
 
@@ -131,6 +132,8 @@ export const api = {
   githubDeviceAvailable: () => commands.githubDeviceAvailable(),
   githubDeviceStart: () => unwrap(commands.githubDeviceStart()),
   githubDevicePoll: (deviceCode: string) => unwrap(commands.githubDevicePoll(deviceCode)),
+  /** What the connected account can clone, most recently pushed first. */
+  githubRepositories: () => unwrap(commands.githubRepositories()),
   githubRepository: (path: string) => unwrap(commands.githubRepository(path)),
   githubPullRequests: (path: string, itemState: ItemState) =>
     unwrap(commands.githubPullRequests(path, itemState)),
@@ -152,6 +155,23 @@ export const api = {
     unwrap(commands.githubCommentIssue(path, number, body)),
   githubCloseIssue: (path: string, number: number) =>
     unwrap(commands.githubCloseIssue(path, number)),
+
+  // commit message assistant
+  /** The providers an API key is stored for. */
+  aiProviders: () => unwrap(commands.aiProviders()),
+  /** Checks the key, stores it in the keychain; resolves to the models it can use. */
+  aiSaveKey: (provider: Provider, key: string) => unwrap(commands.aiSaveKey(provider, key)),
+  aiClearKey: (provider: Provider) => unwrap(commands.aiClearKey(provider)),
+  aiModels: (provider: Provider) => unwrap(commands.aiModels(provider)),
+  /** Sends the staged changes to `model`; resolves to the message it proposes. */
+  aiCommitMessage: (path: string, provider: Provider, model: string, amend: boolean) =>
+    unwrap(commands.aiCommitMessage(path, provider, model, amend)),
+
+  // updates of the application
+  /** The version of the latest release when it is newer than the running one. */
+  updateCheck: () => unwrap(commands.updateCheck()),
+  /** Downloads and installs the latest release; the application restarts on success. */
+  updateInstall: () => unwrap(commands.updateInstall()),
 };
 
 export function errorMessage(error: unknown): string {

@@ -89,6 +89,23 @@ pub struct Comment {
     pub created_at: i64,
 }
 
+/// A repository the account can reach, as offered for cloning.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteRepository {
+    /// `owner/name`.
+    pub full_name: String,
+    pub description: String,
+    pub private: bool,
+    pub fork: bool,
+    pub archived: bool,
+    /// The HTTPS address to clone from.
+    pub clone_url: String,
+    /// Seconds since the Unix epoch; 0 for a repository nothing was pushed to.
+    pub pushed_at: i64,
+}
+
 /// A connected GitHub account. Cheap to clone: the client is reference-counted.
 #[derive(Clone)]
 pub struct GitHub {
@@ -96,6 +113,9 @@ pub struct GitHub {
 }
 
 const PAGE: u8 = 50;
+/// GitHub's largest page, and how many of them a repository list may span.
+const REPOSITORY_PAGE: u8 = 100;
+const REPOSITORY_PAGES: usize = 10;
 
 impl GitHub {
     /// Connects with a personal access token or an OAuth token.
@@ -114,6 +134,32 @@ impl GitHub {
             avatar_url: user.avatar_url.to_string(),
             html_url: user.html_url.to_string(),
         })
+    }
+
+    /// The repositories the account owns, collaborates on or reaches through an
+    /// organisation, most recently pushed first.
+    pub async fn repositories(&self) -> Result<Vec<RemoteRepository>> {
+        let mut page = self
+            .client
+            .current()
+            .list_repos_for_authenticated_user()
+            .sort("pushed")
+            .per_page(REPOSITORY_PAGE)
+            .send()
+            .await?;
+        let mut found = page.take_items();
+        for _ in 1..REPOSITORY_PAGES {
+            let Some(mut next) = self
+                .client
+                .get_page::<models::Repository>(&page.next)
+                .await?
+            else {
+                break;
+            };
+            found.append(&mut next.take_items());
+            page = next;
+        }
+        Ok(found.into_iter().filter_map(remote_repository).collect())
     }
 
     pub async fn pull_requests(
@@ -230,6 +276,19 @@ impl GitHub {
 
 fn seconds(time: Option<chrono::DateTime<chrono::Utc>>) -> i64 {
     time.map(|time| time.timestamp()).unwrap_or_default()
+}
+
+/// `None` for an entry GitHub sent without an address to clone from.
+fn remote_repository(repo: models::Repository) -> Option<RemoteRepository> {
+    Some(RemoteRepository {
+        clone_url: repo.clone_url?.to_string(),
+        full_name: repo.full_name.unwrap_or(repo.name),
+        description: repo.description.unwrap_or_default(),
+        private: repo.private.unwrap_or(false),
+        fork: repo.fork.unwrap_or(false),
+        archived: repo.archived.unwrap_or(false),
+        pushed_at: seconds(repo.pushed_at),
+    })
 }
 
 fn pull_request(pr: models::pulls::PullRequest) -> PullRequest {

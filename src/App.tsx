@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { CircleUser, Download, Languages, Monitor, Moon, Sun, X } from "lucide-react";
+import { CircleArrowUp, CircleUser, Download, Languages, Monitor, Moon, Sparkles, Sun, X } from "lucide-react";
 
 import type { RepoInfo } from "@/bindings";
+import { AiSettingsDialog } from "@/components/AiSettingsDialog";
+import { CloneDialog } from "@/components/dialogs/CloneDialog";
 import { FormDialog, type FormRequest } from "@/components/dialogs/FormDialog";
 import { EmptyState } from "@/components/EmptyState";
 import { ErrorBanner } from "@/components/ErrorBanner";
@@ -12,32 +14,33 @@ import { RepositoryView } from "@/components/RepositoryView";
 import { TabBar } from "@/components/TabBar";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { UpdateDialog } from "@/components/UpdateDialog";
+import { AiProvider, modelLabel, useAi } from "@/lib/ai";
 import { api, errorMessage, events, isCancelled } from "@/lib/api";
-import { joinPath } from "@/lib/format";
+import { type CloneJob, overallCloneProgress } from "@/lib/cloneProgress";
 import { GitHubProvider, useGitHub } from "@/lib/github";
 import { I18nProvider, useI18n } from "@/lib/i18n";
 import { forgetRecent, loadRecent, rememberRecent } from "@/lib/recent";
 import { loadSession, saveSession } from "@/lib/session";
 import { type Theme, applyTheme, followSystemTheme, loadTheme, nextTheme } from "@/lib/theme";
+import { UpdateProvider, useUpdate } from "@/lib/update";
 import { cn } from "@/lib/utils";
 
 const THEME_ICONS = { system: Monitor, light: Sun, dark: Moon } as const;
 const THEME_LABELS = { system: "Theme: follows the system", light: "Theme: light", dark: "Theme: dark" };
-
-/** `my-repo` for `https://github.com/me/my-repo.git`. */
-function repositoryNameFromUrl(url: string): string {
-  const last = url.replace(/[\\/]+$/, "").split(/[\\/:]/).pop() ?? "";
-  return last.replace(/\.git$/i, "") || "repository";
-}
 
 /** The providers every component relies on, then the application itself. */
 export default function App() {
   return (
     <I18nProvider>
       <GitHubProvider>
-        <TooltipProvider>
-          <Shell />
-        </TooltipProvider>
+        <AiProvider>
+          <UpdateProvider>
+            <TooltipProvider>
+              <Shell />
+            </TooltipProvider>
+          </UpdateProvider>
+        </AiProvider>
       </GitHubProvider>
     </I18nProvider>
   );
@@ -45,6 +48,7 @@ export default function App() {
 
 function Shell() {
   const { t } = useI18n();
+  const update = useUpdate();
   const [tabs, setTabs] = useState<RepoInfo[]>([]);
   const [activePath, setActivePath] = useState<string | null>(null);
   const [recent, setRecent] = useState<string[]>(loadRecent);
@@ -60,23 +64,24 @@ function Shell() {
   }, [theme]);
   useEffect(() => followSystemTheme(() => theme), [theme]);
 
+  // The clone dialog, and the clone it started: it carries on when the dialog is
+  // hidden, followed by a strip under the tabs.
+  const [cloneOpen, setCloneOpen] = useState(false);
+  const [cloneJob, setCloneJob] = useState<CloneJob | null>(null);
+  const [cloneError, setCloneError] = useState<string | null>(null);
   // A clone reports its progress under its destination path until it is opened.
-  const [cloneProgress, setCloneProgress] = useState<{
-    path: string;
-    message: string;
-    percent: number | null;
-  } | null>(null);
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     let cancelled = false;
     events.operationProgress
       .listen((event) => {
-        if (event.payload.operation !== "clone") return;
-        setCloneProgress({
-          path: event.payload.path,
-          message: event.payload.message,
-          percent: event.payload.percent,
-        });
+        const { operation, path, message, percent } = event.payload;
+        if (operation !== "clone") return;
+        setCloneJob((job) =>
+          job && job.destination === path
+            ? { ...job, message, percent: overallCloneProgress(message, percent) ?? job.percent }
+            : job,
+        );
       })
       .then(
         (stop) => {
@@ -92,10 +97,6 @@ function Shell() {
       unlisten?.();
     };
   }, []);
-  useEffect(() => {
-    if (!opening) setCloneProgress(null);
-  }, [opening]);
-
   /** Shows the repository `info` describes in a tab (reusing one for the same path). */
   const show = useCallback((info: RepoInfo) => {
     setTabs((previous) =>
@@ -185,35 +186,27 @@ function Shell() {
     if (typeof chosen === "string") await openPath(chosen);
   }, [openPath, t]);
 
-  const clone = useCallback(() => {
-    setForm({
-      title: t("Clone a repository"),
-      description: t("The clone is made with your own git, so your SSH keys and credential helper apply."),
-      fields: [
-        {
-          key: "url",
-          label: t("Repository URL"),
-          type: "text",
-          required: true,
-          mono: true,
-          placeholder: "https://github.com/user/repo.git",
-        },
-        { key: "parent", label: t("Clone into folder"), type: "folder", required: true },
-        {
-          key: "name",
-          label: t("Folder name (optional, taken from the URL otherwise)"),
-          type: "text",
-          mono: true,
-        },
-      ],
-      action: t("Clone"),
-      onSubmit: (values) => {
-        const url = String(values.url);
-        const name = String(values.name) || repositoryNameFromUrl(url);
-        void opened(() => api.cloneRepository(url, joinPath(String(values.parent), name)));
-      },
-    });
-  }, [opened, t]);
+  const clone = useCallback(
+    async (url: string, destination: string) => {
+      setCloneError(null);
+      setCloneJob({ url, destination, message: "", percent: null });
+      setOpening(true);
+      try {
+        show(await api.cloneRepository(url, destination));
+        setCloneOpen(false);
+      } catch (failure) {
+        if (!isCancelled(failure)) {
+          // Back to the form, with what was typed and why it failed.
+          setCloneError(errorMessage(failure));
+          setCloneOpen(true);
+        }
+      } finally {
+        setOpening(false);
+        setCloneJob(null);
+      }
+    },
+    [show],
+  );
 
   const init = useCallback(() => {
     setForm({
@@ -257,13 +250,17 @@ function Shell() {
         activePath={activePath}
         onActivate={setActivePath}
         onClose={closeTab}
+        onAbout={update.openDialog}
         trailing={
           <OpenMenu
             recent={recent}
             openPaths={tabs.map((tab) => tab.path)}
             busy={opening}
             onBrowse={() => void browse()}
-            onClone={clone}
+            onClone={() => {
+              setCloneError(null);
+              setCloneOpen(true);
+            }}
             onInit={init}
             onOpenPath={(path) => void openPath(path)}
             onClearRecent={() => {
@@ -274,6 +271,8 @@ function Shell() {
         }
         end={
           <>
+            <UpdateButton />
+            <AssistantButton />
             <AccountButton />
             <LanguageButton />
             <Tooltip>
@@ -294,29 +293,34 @@ function Shell() {
         }
       />
       {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
-      {cloneProgress && (
+      {cloneJob && !cloneOpen && (
         <div className="flex items-center gap-2 border-b bg-muted/40 px-3 py-1.5 text-sm" role="status">
           <Download className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-          <span className="min-w-0 truncate" title={cloneProgress.path}>
-            {t("Cloning into")} <code className="font-mono text-xs">{cloneProgress.path}</code>
+          <button
+            type="button"
+            className="min-w-0 truncate hover:underline"
+            title={cloneJob.destination}
+            onClick={() => setCloneOpen(true)}
+          >
+            {t("Cloning into")} <code className="font-mono text-xs">{cloneJob.destination}</code>
+          </button>
+          <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground" title={cloneJob.message}>
+            {cloneJob.message}
           </span>
-          <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground" title={cloneProgress.message}>
-            {cloneProgress.message}
-          </span>
-          <div className="h-1 w-40 shrink-0 overflow-hidden rounded bg-muted">
+          <div className="h-1.5 w-40 shrink-0 overflow-hidden rounded-full bg-muted">
             <div
               className={cn(
-                "h-full rounded bg-primary transition-[width] duration-200",
-                cloneProgress.percent == null && "w-1/3 animate-pulse",
+                "h-full rounded-full bg-primary transition-[width] duration-300",
+                cloneJob.percent == null && "w-1/3 animate-pulse",
               )}
-              style={cloneProgress.percent != null ? { width: `${cloneProgress.percent}%` } : undefined}
+              style={cloneJob.percent != null ? { width: `${cloneJob.percent}%` } : undefined}
             />
           </div>
           <Button
             variant="ghost"
             size="icon-xs"
             aria-label={t("Cancel the clone")}
-            onClick={() => void api.cancelOperation(cloneProgress.path)}
+            onClick={() => void api.cancelOperation(cloneJob.destination)}
           >
             <X />
           </Button>
@@ -351,8 +355,43 @@ function Shell() {
         </div>
       )}
       <FormDialog request={form} onClose={() => setForm(null)} />
+      <CloneDialog
+        open={cloneOpen}
+        job={cloneJob}
+        error={cloneError}
+        onClone={(url, destination) => void clone(url, destination)}
+        onCancel={() => cloneJob && void api.cancelOperation(cloneJob.destination)}
+        onClose={() => setCloneOpen(false)}
+      />
       <GitHubAccountDialog />
+      <AiSettingsDialog />
+      <UpdateDialog />
     </div>
+  );
+}
+
+/** Shown once a newer release exists; opens the dialog that installs it. */
+function UpdateButton() {
+  const { t } = useI18n();
+  const update = useUpdate();
+  if (!update.available) return null;
+  const label = t("Open GIT {version} is available", { version: update.available });
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="gap-1 px-1.5 text-emerald-600 dark:text-emerald-400"
+          aria-label={label}
+          onClick={update.openDialog}
+        >
+          <CircleArrowUp />
+          <span className="text-xs font-medium">{t("Update")}</span>
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -383,6 +422,31 @@ function AccountButton() {
           ) : (
             <CircleUser />
           )}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+/** Opens the settings of the commit message assistant; lit once it can be used. */
+function AssistantButton() {
+  const { t } = useI18n();
+  const ai = useAi();
+  const label = ai.ready
+    ? t("Commit message assistant: {model}", { model: modelLabel(ai.settings) })
+    : t("Set up the commit message assistant");
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className={cn(!ai.ready && "text-muted-foreground")}
+          aria-label={label}
+          onClick={ai.openDialog}
+        >
+          <Sparkles />
         </Button>
       </TooltipTrigger>
       <TooltipContent>{label}</TooltipContent>

@@ -34,13 +34,13 @@ jobs:
       # The crates with tests; the Tauri crate only builds (its test harness
       # fails to load on Windows).
       - name: Tests
-        run: cargo test -p gitui-core -p gitui-forge
+        run: cargo test -p open-git-core -p open-git-forge -p open-git-ai
 
       - name: Clippy
         run: cargo clippy --workspace --all-targets
 
       - name: Build the application crate
-        run: cargo build -p gitui
+        run: cargo build -p open-git
 
       - name: Format
         run: cargo fmt --all --check

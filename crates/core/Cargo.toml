@@ -1,6 +1,6 @@
 [package]
-name = "gitui-core"
-description = "Git operations for gitui, independent of any UI framework"
+name = "open-git-core"
+description = "Git operations for Open GIT, independent of any UI framework"
 version.workspace = true
 edition.workspace = true
 
