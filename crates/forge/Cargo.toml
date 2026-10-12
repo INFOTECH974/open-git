@@ -1,6 +1,6 @@
 [package]
 name = "open-git-forge"
-description = "Pull requests and issues on GitHub for Open GIT"
+description = "Pull requests, issues and workflow runs on GitHub for Open GIT"
 version.workspace = true
 edition.workspace = true
 
@@ -9,7 +9,9 @@ edition.workspace = true
 specta = ["dep:specta"]
 
 [dependencies]
-chrono = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
+# The header and status types `octocrab` takes for a conditional request.
+http = "1"
 keyring = "4"
 # Default features pull `jsonwebtoken` with `aws-lc`, which needs NASM and CMake on
 # Windows; GitHub App JWTs are not needed, and `ring` serves TLS.
@@ -28,5 +30,5 @@ specta = { workspace = true, optional = true }
 thiserror = "2"
 
 [dev-dependencies]
-# The `repositories` example needs a runtime to call the API.
-tokio = { version = "1", features = ["macros", "rt"] }
+# The examples need a runtime to call the API.
+tokio = { version = "1", features = ["macros", "rt", "time"] }

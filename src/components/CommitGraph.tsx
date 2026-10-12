@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 
 import type { GraphRow, HeadInfo, RefInfo, WorkingTreeStatus } from "@/bindings";
+import { CheckIcon } from "@/components/CheckIcon";
 import { GraphLanes } from "@/components/GraphLanes";
 import { RefBadge } from "@/components/RefBadge";
 import { Button } from "@/components/ui/button";
@@ -27,6 +28,7 @@ import {
 } from "@/components/ui/context-menu";
 import { type Repository, isClean } from "@/hooks/useRepository";
 import { api } from "@/lib/api";
+import { CHECK_LABELS, type CommitChecks } from "@/lib/checks";
 import { LANE_WIDTH, LINE_WIDTH, NODE_RADIUS, ROW_HEIGHT, laneX } from "@/lib/graph";
 import { absoluteTime, relativeTime, shortId } from "@/lib/format";
 import { useI18n } from "@/lib/i18n";
@@ -53,6 +55,8 @@ export type CommitAction =
 
 interface Props {
   repo: Repository;
+  /** The workflow runs GitHub has for the commits, by commit id. */
+  checks: Map<string, CommitChecks>;
   selection: Selection | null;
   scrollRequest: ScrollRequest | null;
   onSelect(selection: Selection): void;
@@ -66,7 +70,7 @@ const SEARCH_LIMIT = 500;
 
 /** The virtualized list of commits with their graph lanes, topped by the
  *  uncommitted changes when there are any. */
-export function CommitGraph({ repo, selection, scrollRequest, onSelect, onCommitAction }: Props) {
+export function CommitGraph({ repo, checks, selection, scrollRequest, onSelect, onCommitAction }: Props) {
   const { t } = useI18n();
   const scrollRef = useRef<HTMLDivElement>(null);
   // Row 0 stands for the working tree when it has changes; commits follow.
@@ -308,7 +312,13 @@ export function CommitGraph({ repo, selection, scrollRequest, onSelect, onCommit
             const content = isWip ? (
               <WipRow status={repo.status} lanes={lanes} />
             ) : row ? (
-              <Row row={row} refs={repo.refsByCommit.get(row.id)} head={repo.info.head} lanes={lanes} />
+              <Row
+                row={row}
+                refs={repo.refsByCommit.get(row.id)}
+                checks={checks.get(row.id)}
+                head={repo.info.head}
+                lanes={lanes}
+              />
             ) : (
               <Skeleton width={graphWidth} />
             );
@@ -381,11 +391,13 @@ export function CommitGraph({ repo, selection, scrollRequest, onSelect, onCommit
 interface RowProps {
   row: GraphRow;
   refs: RefInfo[] | undefined;
+  checks: CommitChecks | undefined;
   head: HeadInfo;
   lanes: number;
 }
 
-function Row({ row, refs, head, lanes }: RowProps) {
+function Row({ row, refs, checks, head, lanes }: RowProps) {
+  const { t } = useI18n();
   const shown = refs?.slice(0, MAX_BADGES) ?? [];
   const hidden = (refs?.length ?? 0) - shown.length;
   return (
@@ -405,6 +417,14 @@ function Row({ row, refs, head, lanes }: RowProps) {
             title={refs?.slice(MAX_BADGES).map((r) => r.name).join("\n")}
           >
             +{hidden}
+          </span>
+        )}
+        {checks && (
+          <span
+            className="shrink-0"
+            title={checks.runs.map((run) => `${run.workflow}: ${t(CHECK_LABELS[run.state])}`).join("\n")}
+          >
+            <CheckIcon state={checks.state} className="size-3.5" />
           </span>
         )}
         <span className="truncate text-sm" title={row.summary}>

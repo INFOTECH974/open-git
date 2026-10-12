@@ -11,9 +11,11 @@ import {
 } from "lucide-react";
 
 import type { RepoInfo } from "@/bindings";
+import { CheckIcon } from "@/components/CheckIcon";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { Operation, Progress } from "@/hooks/useRepository";
+import { CHECK_LABELS, type CommitChecks } from "@/lib/checks";
 import { shortId } from "@/lib/format";
 import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
@@ -23,6 +25,9 @@ interface Props {
   operation: Operation | null;
   /** The running fetch, pull or push, as git reports it. */
   progress: Progress | null;
+  /** The workflow runs of the checked-out commit, when GitHub has some. */
+  checks: CommitChecks | undefined;
+  onShowChecks(): void;
   onRefresh(): void;
   onFetch(): void;
   onPull(): void;
@@ -35,6 +40,8 @@ export function RepoHeader({
   info,
   operation,
   progress,
+  checks,
+  onShowChecks,
   onRefresh,
   onFetch,
   onPull,
@@ -47,6 +54,27 @@ export function RepoHeader({
   const networking = operation === "fetch" || operation === "pull" || operation === "push";
   const operationLabel =
     operation === "fetch" ? t("Fetch") : operation === "pull" ? t("Pull") : t("Push");
+  const headChecks = checks && (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          className="shrink-0 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+          aria-label={t("Show the workflow runs")}
+          onClick={onShowChecks}
+        >
+          <CheckIcon state={checks.state} className="size-3.5" />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent>
+        {checks.runs.map((run) => (
+          <div key={run.id}>
+            {run.workflow}: {t(CHECK_LABELS[run.state])}
+          </div>
+        ))}
+      </TooltipContent>
+    </Tooltip>
+  );
   return (
     <div className="border-b px-3 py-2">
       <div className="flex items-center gap-1">
@@ -77,6 +105,7 @@ export function RepoHeader({
             <span className="min-w-0 truncate font-medium" title={head.branch}>
               {head.branch}
             </span>
+            {headChecks}
             {head.upstream ? (
               <span
                 className="ml-auto shrink-0 font-mono tabular-nums text-muted-foreground"
@@ -98,6 +127,7 @@ export function RepoHeader({
                 ? t("HEAD detached at {id}", { id: shortId(head.target) })
                 : t("HEAD detached")}
             </span>
+            {headChecks}
           </>
         )}
       </div>

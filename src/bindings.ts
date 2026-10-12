@@ -148,6 +148,13 @@ export const commands = {
 	githubCommentIssue: (path: string, number: number, body: string) => typedError<Comment, AppError>(__TAURI_INVOKE("github_comment_issue", { path, number, body })),
 	githubCloseIssue: (path: string, number: number) => typedError<Issue, AppError>(__TAURI_INVOKE("github_close_issue", { path, number })),
 	/**
+	 *  The latest runs of the repository's workflows, newest first. The UI calls
+	 *  this every few seconds while one of them runs.
+	 */
+	githubWorkflowRuns: (path: string) => typedError<WorkflowRun[], AppError>(__TAURI_INVOKE("github_workflow_runs", { path })),
+	/**  The jobs of a workflow run, each with its steps. */
+	githubWorkflowJobs: (path: string, run: number) => typedError<WorkflowJob[], AppError>(__TAURI_INVOKE("github_workflow_jobs", { path, run })),
+	/**
 	 *  The providers that can be used now: a key is stored for them, or their
 	 *  program is installed.
 	 */
@@ -217,6 +224,15 @@ export type AppError =
 
 /**  What changed: the history (refs, `HEAD`, index) or only the working tree. */
 export type ChangeKind = "history" | "workingTree";
+
+/**  Where a workflow run, a job or a step stands. */
+export type CheckState = 
+/**  Not started: no runner took it yet, or the steps before it are not done. */
+"queued" | 
+/**  Held until someone approves it. */
+"waiting" | "inProgress" | "success" | "failure" | "cancelled" | "skipped" | 
+/**  Finished without a verdict, or in a state this version does not know. */
+"neutral";
 
 export type Comment = {
 	id: number,
@@ -517,6 +533,53 @@ export type StatusEntry = {
 export type UpdateProgress = {
 	/**  `None` when the server did not say how large the download is. */
 	percent: number | null,
+};
+
+/**  One job of a run, with the steps it goes through. */
+export type WorkflowJob = {
+	id: number,
+	name: string,
+	state: CheckState,
+	htmlUrl: string,
+	/**  Seconds since the Unix epoch; `None` until a runner starts it. */
+	startedAt: number | null,
+	completedAt: number | null,
+	steps: WorkflowStep[],
+};
+
+/**  One execution of a workflow. */
+export type WorkflowRun = {
+	id: number,
+	/**  The workflow, as its file names it (`CI`). */
+	workflow: string,
+	/**  What the run is about: the commit summary, or the title of the pull request. */
+	title: string,
+	/**  Counts the runs of this workflow. */
+	number: number,
+	/**  More than 1 once the run was started again. */
+	attempt: number,
+	/**  What started it: `push`, `pull_request`, `schedule`… */
+	event: string,
+	/**  Empty when the run is not tied to a branch. */
+	branch: string,
+	/**  The commit the workflow runs on. */
+	commit: string,
+	state: CheckState,
+	actor: string,
+	htmlUrl: string,
+	/**  Seconds since the Unix epoch, for this attempt. */
+	startedAt: number,
+	/**  When it last changed: once finished, when it ended. */
+	updatedAt: number,
+};
+
+export type WorkflowStep = {
+	/**  Its place in the job, from 1. */
+	number: number,
+	name: string,
+	state: CheckState,
+	startedAt: number | null,
+	completedAt: number | null,
 };
 
 export type WorkingTreeStatus = {

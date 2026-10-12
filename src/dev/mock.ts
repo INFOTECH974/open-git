@@ -13,6 +13,7 @@ import type {
   Account,
   AiModel,
   AppError,
+  CheckState,
   CommitDetails,
   CommitSuggestion,
   DiffLine,
@@ -33,6 +34,9 @@ import type {
   RowLayout,
   StashEntry,
   StatusEntry,
+  WorkflowJob,
+  WorkflowRun,
+  WorkflowStep,
   WorkingTreeStatus,
 } from "@/bindings";
 
@@ -532,6 +536,180 @@ function requireSignedIn(): void {
   if (!githubSignedIn) throw githubError("no GitHub account is connected");
 }
 
+// ---- GitHub Actions, faked ---------------------------------------------------------
+//
+// A run is a plan: jobs, their steps and how long each takes. What the commands
+// answer is where that plan stands at the time they are asked, so a run started
+// a moment ago goes from queued to its verdict while the UI keeps asking.
+
+interface JobPlan {
+  name: string;
+  /** Seconds after the run is created before a runner takes the job. */
+  after: number;
+  /** Each step and the seconds it takes. */
+  steps: [name: string, seconds: number][];
+  /** Index of the step that breaks the job, when one does. */
+  fails?: number;
+}
+
+interface RunPlan {
+  id: number;
+  workflow: string;
+  number: number;
+  event: string;
+  branch: string;
+  commit: string;
+  /** Seconds since the Unix epoch. */
+  createdAt: number;
+  jobs: JobPlan[];
+}
+
+function rustJob(os: string, after: number, slowness: number, fails?: number): JobPlan {
+  const steps: JobPlan["steps"] = [
+    ["Set up job", 2],
+    ["Run actions/checkout@v4", 2],
+    ["Run dtolnay/rust-toolchain@stable", 4],
+    ["cargo fmt --all --check", 2],
+    ["cargo clippy --workspace --all-targets", 8],
+    ["cargo test", 13],
+    ["Post Run actions/checkout@v4", 1],
+    ["Complete job", 1],
+  ];
+  return {
+    name: `Rust (${os})`,
+    after,
+    steps: steps.map(([name, seconds]) => [name, Math.round(seconds * slowness)]),
+    fails,
+  };
+}
+
+/** The jobs of the `CI` workflow; `fails` breaks clippy on Linux. */
+function ciJobs(fails = false): JobPlan[] {
+  return [
+    rustJob("ubuntu-latest", 4, 1, fails ? 4 : undefined),
+    rustJob("windows-latest", 6, 1.4),
+    {
+      name: "Frontend",
+      after: 4,
+      steps: [
+        ["Set up job", 2],
+        ["Run actions/checkout@v4", 2],
+        ["Run pnpm install --frozen-lockfile", 6],
+        ["Run pnpm build", 9],
+        ["Complete job", 1],
+      ],
+    },
+  ];
+}
+
+function releaseJobs(): JobPlan[] {
+  return ["windows", "macos-arm", "linux"].map((target, index) => ({
+    name: `Installer (${target})`,
+    after: 4 + index,
+    steps: [
+      ["Set up job", 2],
+      ["Run actions/checkout@v4", 2],
+      ["Run tauri-apps/tauri-action@v0", 300 + index * 45],
+      ["Complete job", 1],
+    ],
+  }));
+}
+
+let nextRunId = 18_431_216_000;
+const runNumbers = new Map<string, number>([
+  ["CI", 208],
+  ["Release", 13],
+]);
+/** Newest first, as GitHub lists them. */
+const runPlans: RunPlan[] = [];
+
+function startRun(
+  workflow: string,
+  event: string,
+  branch: string,
+  commit: string,
+  jobs: JobPlan[],
+  createdAt = Date.now() / 1000,
+): void {
+  const number = (runNumbers.get(workflow) ?? 0) + 1;
+  runNumbers.set(workflow, number);
+  runPlans.unshift({ id: nextRunId++, workflow, number, event, branch, commit, createdAt: Math.floor(createdAt), jobs });
+}
+
+// What ran before the application opened: the commits behind `origin/main`, and a release.
+{
+  const pushed: string[] = [];
+  for (let id = remoteTips.get("origin/main"); id && pushed.length < 3; id = byId.get(id)?.parents[0]) {
+    pushed.push(id);
+  }
+  const [latestTag, tagged] = [...tagTips].pop()!;
+  startRun("Release", "push", latestTag, tagged, releaseJobs(), now - 86400 * 6);
+  if (pushed[2]) startRun("CI", "push", "main", pushed[2], ciJobs(), now - 3600 * 30);
+  if (pushed[1]) startRun("CI", "push", "main", pushed[1], ciJobs(true), now - 3600 * 4);
+}
+
+function jobAt(run: RunPlan, plan: JobPlan, index: number, at: number): WorkflowJob {
+  const start = run.createdAt + plan.after;
+  let clock = start;
+  let broken = false;
+  const steps = plan.steps.map(([name, seconds], position): WorkflowStep => {
+    const number = position + 1;
+    if (broken) return { number, name, state: "skipped", startedAt: null, completedAt: null };
+    const begins = clock;
+    if (at < begins) return { number, name, state: "queued", startedAt: null, completedAt: null };
+    clock += seconds;
+    if (at < clock) return { number, name, state: "inProgress", startedAt: begins, completedAt: null };
+    broken = plan.fails === position;
+    return { number, name, state: broken ? "failure" : "success", startedAt: begins, completedAt: clock };
+  });
+  const over = at >= clock && steps.every((step) => step.state !== "queued");
+  const id = run.id * 10 + index;
+  return {
+    id,
+    name: plan.name,
+    state: at < start ? "queued" : !over ? "inProgress" : broken ? "failure" : "success",
+    htmlUrl: `https://github.com/ada/mock-repo/actions/runs/${run.id}/job/${id}`,
+    startedAt: at < start ? null : start,
+    completedAt: over ? clock : null,
+    steps,
+  };
+}
+
+function jobsAt(run: RunPlan, at = Date.now() / 1000): WorkflowJob[] {
+  return run.jobs.map((plan, index) => jobAt(run, plan, index, at));
+}
+
+function runAt(run: RunPlan, at = Date.now() / 1000): WorkflowRun {
+  const jobs = jobsAt(run, at);
+  const state: CheckState = jobs.every((job) => job.state === "queued")
+    ? "queued"
+    : jobs.some((job) => job.completedAt === null)
+      ? "inProgress"
+      : jobs.some((job) => job.state === "failure")
+        ? "failure"
+        : "success";
+  // The last time anything moved, which is the end of the run once it is over.
+  const moments = jobs.flatMap((job) => [
+    job.startedAt,
+    ...job.steps.flatMap((step) => [step.startedAt, step.completedAt]),
+  ]);
+  return {
+    id: run.id,
+    workflow: run.workflow,
+    title: byId.get(run.commit)?.summary ?? run.workflow,
+    number: run.number,
+    attempt: 1,
+    event: run.event,
+    branch: run.branch,
+    commit: run.commit,
+    state,
+    actor: githubAccount.login,
+    htmlUrl: `https://github.com/ada/mock-repo/actions/runs/${run.id}`,
+    startedAt: run.createdAt,
+    updatedAt: Math.max(run.createdAt, ...moments.filter((moment) => moment !== null)),
+  };
+}
+
 // ---- commit message assistant, faked ---------------------------------------------
 
 const aiKeys = new Set<Provider>();
@@ -834,6 +1012,8 @@ function handle(command: string, args: Record<string, unknown>): unknown {
     case "push_branch": {
       const name = String(args.name);
       remoteTips.set(`origin/${name}`, resolve(name));
+      // Only `main` is known to pass: any other branch breaks clippy.
+      startRun("CI", "push", name, resolve(name), ciJobs(name !== "main"));
       return delayed(null, 500);
     }
     case "set_upstream":
@@ -968,6 +1148,7 @@ function handle(command: string, args: Record<string, unknown>): unknown {
         if (repo.head.branch === "main") {
           remoteTips.set("origin/main", repo.head.target);
           promotion = { due: Date.now() + PROMOTION_DELAY_MS, target: repo.head.target };
+          startRun("CI", "push", "main", repo.head.target, ciJobs());
         }
         repo.ahead = 0;
         return null;
@@ -979,6 +1160,8 @@ function handle(command: string, args: Record<string, unknown>): unknown {
     case "github_sign_in":
       if (String(args.token).trim().length < 4) throw githubError("GitHub refused the request: Bad credentials");
       githubSignedIn = true;
+      // Something to watch: the workflow of the last push starts as the account connects.
+      startRun("CI", "push", "main", resolve("origin/main"), ciJobs());
       return githubAccount;
     case "github_sign_out":
       githubSignedIn = false;
@@ -1057,6 +1240,15 @@ function handle(command: string, args: Record<string, unknown>): unknown {
       if (!issue) throw githubError("GitHub refused the request: Not Found");
       issue.state = "closed";
       return issue;
+    }
+    case "github_workflow_runs":
+      requireSignedIn();
+      return delayed(runPlans.slice(0, 30).map((run) => runAt(run)), 200);
+    case "github_workflow_jobs": {
+      requireSignedIn();
+      const run = runPlans.find((candidate) => candidate.id === Number(args.run));
+      if (!run) throw githubError("GitHub refused the request: Not Found");
+      return delayed(jobsAt(run), 200);
     }
     // commit message assistant
     case "ai_providers":

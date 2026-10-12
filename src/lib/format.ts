@@ -37,6 +37,16 @@ export function absoluteTime(seconds: number): string {
   return absolute.format(new Date(seconds * 1000));
 }
 
+/** "2m 14s", for a length of time in seconds. */
+export function duration(seconds: number): string {
+  const total = Math.max(0, Math.round(seconds));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m ${total % 60}s`;
+  return `${total}s`;
+}
+
 /** Splits `src/lib/utils.ts` into `src/lib/` and `utils.ts`. */
 export function splitPath(path: string): { dir: string; name: string } {
   const slash = path.lastIndexOf("/");

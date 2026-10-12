@@ -1,11 +1,20 @@
 import { useEffect, useState } from "react";
 import { Check, Copy, GitCommitHorizontal, LoaderCircle } from "lucide-react";
 
-import type { CommitDetails, FileChange, FileStatus, RefInfo, Signature } from "@/bindings";
+import type {
+  CommitDetails,
+  FileChange,
+  FileStatus,
+  RefInfo,
+  Signature,
+  WorkflowRun,
+} from "@/bindings";
+import { CheckIcon } from "@/components/CheckIcon";
 import { RefBadge } from "@/components/RefBadge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { CHECK_LABELS, type CommitChecks } from "@/lib/checks";
 import { absoluteTime, initials, relativeTime, shortId, splitPath } from "@/lib/format";
 import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
@@ -15,11 +24,15 @@ interface Props {
   loading: boolean;
   error: string | null;
   refs: RefInfo[];
+  /** The workflow runs of the commit, when GitHub has some. */
+  checks: CommitChecks | undefined;
   headBranch: string | null;
   /** Path of the file whose diff is open, if any. */
   openFile: string | null;
   onSelectCommit(id: string): void;
   onOpenFile(file: FileChange): void;
+  /** Opens the page of a workflow run on GitHub. */
+  onOpenRun(run: WorkflowRun): void;
 }
 
 export function CommitDetailsPanel({
@@ -27,10 +40,12 @@ export function CommitDetailsPanel({
   loading,
   error,
   refs,
+  checks,
   headBranch,
   openFile,
   onSelectCommit,
   onOpenFile,
+  onOpenRun,
 }: Props) {
   const { t } = useI18n();
   if (!details) {
@@ -106,6 +121,29 @@ export function CommitDetailsPanel({
                 </button>
               ))}
             </div>
+          </div>
+        )}
+        {checks && (
+          <div className="flex items-start gap-2 text-xs">
+            <span className="w-16 shrink-0 py-0.5 text-muted-foreground">{t("Actions")}</span>
+            <ul className="min-w-0 flex-1">
+              {checks.runs.map((run) => (
+                <li key={run.id}>
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-1.5 rounded px-1 py-0.5 text-left hover:bg-muted/60"
+                    title={t("Open on GitHub")}
+                    onClick={() => onOpenRun(run)}
+                  >
+                    <CheckIcon state={run.state} className="size-3.5" />
+                    <span className="min-w-0 flex-1 truncate">
+                      {run.workflow} <span className="text-muted-foreground">#{run.number}</span>
+                    </span>
+                    <span className="shrink-0 text-muted-foreground">{t(CHECK_LABELS[run.state])}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
           </div>
         )}
       </section>

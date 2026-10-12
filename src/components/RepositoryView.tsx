@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   DndContext,
   type DragEndEvent,
@@ -24,6 +24,7 @@ import type {
   RepoInfo,
   StashEntry,
   StatusEntry,
+  WorkflowRun,
 } from "@/bindings";
 import { CommitDetailsPanel } from "@/components/CommitDetailsPanel";
 import {
@@ -54,8 +55,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
+import type { WorkflowRunAction } from "@/components/WorkflowRunsSection";
 import { WorkInProgressPanel } from "@/components/WorkInProgressPanel";
 import { isClean, useRepository } from "@/hooks/useRepository";
+import { useWorkflowRuns } from "@/hooks/useWorkflowRuns";
 import { api, errorMessage } from "@/lib/api";
 import { shortId } from "@/lib/format";
 import { branchNameForIssue } from "@/lib/github";
@@ -477,6 +480,42 @@ export function RepositoryView({ info, active }: Props) {
     }
   };
 
+  // A push or a fetch that moves a remote branch is when GitHub starts workflows.
+  const remoteTips = useMemo(
+    () =>
+      repo.refs
+        .filter((reference) => reference.kind === "remoteBranch")
+        .map((reference) => `${reference.name}@${reference.target}`)
+        .join(" "),
+    [repo.refs],
+  );
+  const workflows = useWorkflowRuns(path, active, remoteTips);
+  const workflowsRef = useRef<HTMLElement>(null);
+  const openOnGitHub = (url: string) => void openUrl(url).catch(report);
+
+  const onWorkflowRunAction = (action: WorkflowRunAction, run: WorkflowRun) => {
+    switch (action) {
+      case "open":
+        openOnGitHub(run.htmlUrl);
+        break;
+      case "copyUrl":
+        copy(run.htmlUrl);
+        break;
+      case "showCommit":
+        api.commitIndex(path, run.commit).then((index) => {
+          if (index !== null) {
+            select({ kind: "commit", id: run.commit }, true);
+            return;
+          }
+          report(
+            new Error(
+              t("Commit {id} is not in the local history; fetch first.", { id: shortId(run.commit) }),
+            ),
+          );
+        }, report);
+    }
+  };
+
   const onIssueAction = (action: IssueAction, issue: Issue) => {
     switch (action) {
       case "open":
@@ -764,6 +803,10 @@ export function RepositoryView({ info, active }: Props) {
               info={repo.info}
               operation={repo.operation}
               progress={repo.progress}
+              checks={headTarget ? workflows.byCommit.get(headTarget) : undefined}
+              onShowChecks={() =>
+                workflowsRef.current?.scrollIntoView({ block: "start", behavior: "smooth" })
+              }
               onRefresh={() => void repo.refresh()}
               onFetch={() => void run("fetch", () => api.fetch(path))}
               onPull={() => void run("pull", () => api.pull(path))}
@@ -784,12 +827,17 @@ export function RepositoryView({ info, active }: Props) {
                 >
                   <ForgePanel
                     repoPath={path}
+                    active={active}
                     version={forgeVersion}
                     busy={busy}
+                    workflows={workflows}
+                    workflowsRef={workflowsRef}
                     onCreatePullRequest={createPullRequest}
                     onCreateIssue={createIssue}
                     onPullRequestAction={onPullRequestAction}
                     onIssueAction={onIssueAction}
+                    onWorkflowRunAction={onWorkflowRunAction}
+                    onOpenUrl={openOnGitHub}
                   />
                 </RefsPanel>
                 <DragOverlay dropAnimation={null}>
@@ -832,6 +880,7 @@ export function RepositoryView({ info, active }: Props) {
             ) : (
               <CommitGraph
                 repo={repo}
+                checks={workflows.byCommit}
                 selection={selection}
                 scrollRequest={scrollRequest}
                 onSelect={(next) => select(next)}
@@ -875,10 +924,12 @@ export function RepositoryView({ info, active }: Props) {
                 loading={detailsLoading}
                 error={detailsError}
                 refs={details ? (repo.refsByCommit.get(details.id) ?? []) : []}
+                checks={details ? workflows.byCommit.get(details.id) : undefined}
                 headBranch={repo.info.head.branch}
                 openFile={diffTarget?.kind === "commit" ? diffTarget.file.path : null}
                 onSelectCommit={(id) => select({ kind: "commit", id }, true)}
                 onOpenFile={openCommitFile}
+                onOpenRun={(run) => openOnGitHub(run.htmlUrl)}
               />
             )}
           </aside>

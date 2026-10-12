@@ -155,6 +155,10 @@ export const api = {
     unwrap(commands.githubCommentIssue(path, number, body)),
   githubCloseIssue: (path: string, number: number) =>
     unwrap(commands.githubCloseIssue(path, number)),
+  /** The latest workflow runs, newest first; cheap to ask again when nothing changed. */
+  githubWorkflowRuns: (path: string) => unwrap(commands.githubWorkflowRuns(path)),
+  githubWorkflowJobs: (path: string, run: number) =>
+    unwrap(commands.githubWorkflowJobs(path, run)),
 
   // commit message assistant
   /** The providers an API key is stored for. */

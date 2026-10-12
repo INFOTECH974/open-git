@@ -286,10 +286,10 @@ export const fr: Record<string, string> = {
 
   // ---- GitHub --------------------------------------------------------------
   "GitHub account": "Compte GitHub",
-  "Pull requests and issues of your repositories are available in the left panel.":
-    "Les pull requests et les issues de vos dépôts sont disponibles dans le panneau de gauche.",
-  "Connect an account to list and create pull requests and issues.":
-    "Connectez un compte pour lister et créer des pull requests et des issues.",
+  "Workflow runs, pull requests and issues of your repositories are available in the left panel.":
+    "Les exécutions des workflows, les pull requests et les issues de vos dépôts sont disponibles dans le panneau de gauche.",
+  "Connect an account to follow the workflow runs, and to list and create pull requests and issues.":
+    "Connectez un compte pour suivre les exécutions des workflows, et pour lister et créer des pull requests et des issues.",
   "Open the profile": "Ouvrir le profil",
   "Sign out": "Se déconnecter",
   "Enter this code on GitHub, then come back here. The page opened in your browser; if not, open it below.":
@@ -337,6 +337,26 @@ export const fr: Record<string, string> = {
   "Markdown is fine.": "Le Markdown est accepté.",
   "Close #{n}?": "Fermer #{n} ?",
   "Close the issue": "Fermer l'issue",
+  // ---- GitHub Actions --------------------------------------------------------
+  "Actions": "Actions",
+  "{n} running": "{n} en cours",
+  "No workflow has run yet.": "Aucun workflow n'a encore été exécuté.",
+  "Show {n} more": "Afficher {n} de plus",
+  "Show fewer": "Afficher moins",
+  "Show the commit in the graph": "Afficher le commit dans le graphe",
+  "Commit {id} is not in the local history; fetch first.":
+    "Le commit {id} n'est pas dans l'historique local ; faites un fetch d'abord.",
+  "Loading the jobs…": "Chargement des jobs…",
+  "No job has started yet.": "Aucun job n'a encore démarré.",
+  "Show the workflow runs": "Afficher les exécutions des workflows",
+  "Queued": "En file d'attente",
+  "Waiting for approval": "En attente d'approbation",
+  "In progress": "En cours",
+  "Succeeded": "Réussi",
+  "Failed": "Échoué",
+  "Cancelled": "Annulé",
+  "Skipped": "Ignoré",
+  "No verdict": "Sans verdict",
   // ---- commit message assistant ---------------------------------------------
   "Commit message assistant": "Assistant de message de commit",
   "Commit message assistant: {model}": "Assistant de message de commit : {model}",

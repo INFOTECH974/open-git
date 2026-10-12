@@ -96,8 +96,8 @@ export function GitHubAccountDialog() {
           <DialogTitle>{t("GitHub account")}</DialogTitle>
           <DialogDescription>
             {github.account
-              ? t("Pull requests and issues of your repositories are available in the left panel.")
-              : t("Connect an account to list and create pull requests and issues.")}
+              ? t("Workflow runs, pull requests and issues of your repositories are available in the left panel.")
+              : t("Connect an account to follow the workflow runs, and to list and create pull requests and issues.")}
           </DialogDescription>
         </DialogHeader>
 

@@ -1,7 +1,14 @@
 //! The GitHub REST API, reduced to what the UI shows.
 
-use octocrab::{Octocrab, models, params};
-use serde::{Deserialize, Serialize};
+use std::{
+    any::Any,
+    collections::HashMap,
+    sync::{Arc, Mutex, PoisonError},
+};
+
+use http::{HeaderMap, StatusCode};
+use octocrab::{FromResponse, Octocrab, etag::EntityTag, models, params};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::{GitHubRepo, Result};
 
@@ -110,7 +117,13 @@ pub struct RemoteRepository {
 #[derive(Clone)]
 pub struct GitHub {
     client: Octocrab,
+    polled: Arc<Polled>,
 }
+
+/// The last answer to each polled route, with the tag GitHub gave it.
+type Polled = Mutex<HashMap<String, (EntityTag, Box<dyn Any + Send + Sync>)>>;
+/// Past this many answers the memory starts over, rather than tracking their age.
+const POLLED_ROUTES: usize = 64;
 
 const PAGE: u8 = 50;
 /// GitHub's largest page, and how many of them a repository list may span.
@@ -123,7 +136,53 @@ impl GitHub {
         let client = Octocrab::builder()
             .personal_token(token.to_owned())
             .build()?;
-        Ok(Self { client })
+        Ok(Self {
+            client,
+            polled: Arc::default(),
+        })
+    }
+
+    /// A `GET` meant to be repeated every few seconds. It carries the tag of the
+    /// last answer, so that GitHub replies `304 Not Modified` when nothing
+    /// changed: such an answer does not count against the rate limit. `convert`
+    /// keeps what matters of a new answer, which is also what is remembered.
+    pub(crate) async fn poll<R, T>(&self, route: &str, convert: impl FnOnce(R) -> T) -> Result<T>
+    where
+        R: DeserializeOwned,
+        T: Clone + Send + Sync + 'static,
+    {
+        let mut headers = HeaderMap::new();
+        if let Some(tag) = self.polled_tag(route) {
+            EntityTag::insert_if_none_match_header(&mut headers, tag)?;
+        }
+        let mut response = self.client._get_with_headers(route, Some(headers)).await?;
+        if response.status() == StatusCode::NOT_MODIFIED {
+            if let Some(known) = self.polled_answer(route) {
+                return Ok(known);
+            }
+            // The memory started over between the two locks: ask plainly.
+            response = self.client._get(route).await?;
+        }
+        let tag = EntityTag::extract_from_response(&response);
+        let answer = convert(R::from_response(octocrab::map_github_error(response).await?).await?);
+        if let Some(tag) = tag {
+            let mut polled = self.polled.lock().unwrap_or_else(PoisonError::into_inner);
+            if polled.len() >= POLLED_ROUTES && !polled.contains_key(route) {
+                polled.clear();
+            }
+            polled.insert(route.to_owned(), (tag, Box::new(answer.clone())));
+        }
+        Ok(answer)
+    }
+
+    fn polled_tag(&self, route: &str) -> Option<EntityTag> {
+        let polled = self.polled.lock().unwrap_or_else(PoisonError::into_inner);
+        polled.get(route).map(|(tag, _)| tag.clone())
+    }
+
+    fn polled_answer<T: Clone + 'static>(&self, route: &str) -> Option<T> {
+        let polled = self.polled.lock().unwrap_or_else(PoisonError::into_inner);
+        polled.get(route)?.1.downcast_ref::<T>().cloned()
     }
 
     /// The user the token belongs to; fails when the token is invalid.

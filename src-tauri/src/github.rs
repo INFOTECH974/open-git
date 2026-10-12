@@ -1,10 +1,10 @@
-//! GitHub commands: the connected account and the pull requests and issues of
-//! the repository behind a tab's `origin` remote.
+//! GitHub commands: the connected account and the pull requests, issues and
+//! workflow runs of the repository behind a tab's `origin` remote.
 
 use open_git_forge::{
     Account, Comment, DeviceCode, DevicePoll, GitHub, GitHubRepo, Issue, ItemState, PullRequest,
-    RemoteRepository, clear_token, load_token, parse_github_url, poll_device, save_token,
-    start_device_flow,
+    RemoteRepository, WorkflowJob, WorkflowRun, clear_token, load_token, parse_github_url,
+    poll_device, save_token, start_device_flow,
 };
 use serde::Serialize;
 use tauri::State;
@@ -234,4 +234,28 @@ pub async fn github_close_issue(
         .client
         .close_issue(&repo, number as u64)
         .await?)
+}
+
+/// The latest runs of the repository's workflows, newest first. The UI calls
+/// this every few seconds while one of them runs.
+#[tauri::command]
+#[specta::specta]
+pub async fn github_workflow_runs(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<Vec<WorkflowRun>> {
+    let repo = github_repo(&state, &path)?;
+    Ok(session(&state)?.client.workflow_runs(&repo).await?)
+}
+
+/// The jobs of a workflow run, each with its steps.
+#[tauri::command]
+#[specta::specta]
+pub async fn github_workflow_jobs(
+    state: State<'_, AppState>,
+    path: String,
+    run: u64,
+) -> Result<Vec<WorkflowJob>> {
+    let repo = github_repo(&state, &path)?;
+    Ok(session(&state)?.client.workflow_jobs(&repo, run).await?)
 }

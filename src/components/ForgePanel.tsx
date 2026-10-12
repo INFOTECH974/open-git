@@ -1,4 +1,4 @@
-import { type ComponentType, type ReactNode, useEffect, useState } from "react";
+import { type ComponentType, type ReactNode, type Ref, useEffect, useState } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -18,7 +18,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 
-import type { GitHubRepo, Issue, ItemState, PullRequest } from "@/bindings";
+import type { GitHubRepo, Issue, ItemState, PullRequest, WorkflowRun } from "@/bindings";
 import { Button } from "@/components/ui/button";
 import {
   ContextMenu,
@@ -27,6 +27,8 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import { type WorkflowRunAction, WorkflowRunsSection } from "@/components/WorkflowRunsSection";
+import type { WorkflowRuns } from "@/hooks/useWorkflowRuns";
 import { api, errorMessage } from "@/lib/api";
 import { relativeTime } from "@/lib/format";
 import { useGitHub } from "@/lib/github";
@@ -38,24 +40,39 @@ export type IssueAction = "open" | "branch" | "comment" | "close" | "copyUrl";
 
 interface Props {
   repoPath: string;
+  /** Whether this repository's tab is the one shown. */
+  active: boolean;
   /** Bumped by the parent after an action, so the lists reload. */
   version: number;
   busy: boolean;
+  workflows: WorkflowRuns;
+  /** Set on the workflow runs, so the top of the panel can scroll to them. */
+  workflowsRef?: Ref<HTMLElement>;
   onCreatePullRequest(): void;
   onCreateIssue(): void;
   onPullRequestAction(action: PullRequestAction, pullRequest: PullRequest): void;
   onIssueAction(action: IssueAction, issue: Issue): void;
+  onWorkflowRunAction(action: WorkflowRunAction, run: WorkflowRun): void;
+  onOpenUrl(url: string): void;
 }
 
-/** Pull requests and issues of the repository behind `origin`, when it is on GitHub. */
+/**
+ * Workflow runs, pull requests and issues of the repository behind `origin`,
+ * when it is on GitHub.
+ */
 export function ForgePanel({
   repoPath,
+  active,
   version,
   busy,
+  workflows,
+  workflowsRef,
   onCreatePullRequest,
   onCreateIssue,
   onPullRequestAction,
   onIssueAction,
+  onWorkflowRunAction,
+  onOpenUrl,
 }: Props) {
   const { t } = useI18n();
   const github = useGitHub();
@@ -103,6 +120,14 @@ export function ForgePanel({
 
   return (
     <div className="mt-2 border-t pt-1">
+      <WorkflowRunsSection
+        repoPath={repoPath}
+        active={active}
+        workflows={workflows}
+        sectionRef={workflowsRef}
+        onRunAction={onWorkflowRunAction}
+        onOpenUrl={onOpenUrl}
+      />
       <ForgeSection<PullRequest>
         title={t("Pull requests")}
         icon={GitPullRequest}
