@@ -10,7 +10,7 @@
 //! A  v1.0                 Initial commit
 //! ```
 
-use std::path::Path;
+use std::{fs, path::Path};
 
 use git2::{Oid, Repository, RepositoryInitOptions, Signature, Time};
 use gitui_core::{DiffLineKind, Error, FileStatus, HeadInfo, LaneRef, RefKind, Repo};
@@ -181,7 +181,12 @@ fn info_describes_the_checked_out_branch() {
         info.name,
         fixture.dir.path().file_name().unwrap().to_str().unwrap()
     );
-    assert_eq!(Path::new(&info.path), fixture.dir.path());
+    // The temporary directory may be spelled differently (`RUNNER~1` for
+    // `runneradmin` on Windows), so compare what the two paths resolve to.
+    assert_eq!(
+        fs::canonicalize(&info.path).unwrap(),
+        fs::canonicalize(fixture.dir.path()).unwrap()
+    );
     assert!(!info.path.ends_with(['/', '\\']), "{}", info.path);
     assert_eq!(info.head, head(Some("main"), Some(fixture.id(fixture.d))));
 }

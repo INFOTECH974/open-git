@@ -82,26 +82,28 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 /// the real `git.exe` behind the launcher found on the `PATH`). Killing `child`
 /// alone would let them finish the transfer, holding the pipes read on this side.
 fn kill_tree(child: &mut Child) {
-    let mut killer;
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        killer = Command::new("taskkill");
-        killer
+        let _ = Command::new("taskkill")
             .args(["/PID", &child.id().to_string(), "/T", "/F"])
-            .creation_flags(CREATE_NO_WINDOW);
+            .creation_flags(CREATE_NO_WINDOW)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
     }
     #[cfg(unix)]
     {
-        // A negative id names the process group `git_with_progress` gave the child.
-        killer = Command::new("kill");
-        killer.args(["-KILL", &format!("-{}", child.id())]);
+        // The child leads the process group `git_with_progress` gave it.
+        if let Ok(group) = libc::pid_t::try_from(child.id()) {
+            // SAFETY: `killpg` only sends a signal and touches no memory. The child
+            // is not reaped yet (its token still holds it), so the id is its own.
+            unsafe {
+                libc::killpg(group, libc::SIGKILL);
+            }
+        }
     }
-    let _ = killer
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
     let _ = child.kill();
 }
 
@@ -256,14 +258,18 @@ pub(crate) fn git_with_progress(
         let waited = {
             let mut state = token.lock();
             let child = state.child.as_mut().expect("the child was stored");
-            child.try_wait().map_err(|source| Error::Spawn { source })?
+            let waited = child.try_wait().map_err(|source| Error::Spawn { source })?;
+            if waited.is_some() {
+                // Reaped: its id may be reused, so `cancel` must not see it again.
+                state.child = None;
+            }
+            waited
         };
         match waited {
             Some(status) => break status,
             None => thread::sleep(Duration::from_millis(50)),
         }
     };
-    token.lock().child = None;
     let stdout_text = stdout_reader.join().unwrap_or_default();
 
     if token.is_cancelled() {

@@ -94,7 +94,8 @@ Toutes les étapes 1 à 6 de la feuille de route sont faites. Vérifié : 44 tes
 
 ## Pièges connus
 
-- **Annulation** : `child.kill()` ne tue que le premier processus. `git` délègue le réseau à des helpers (et `cmd\git.exe` sous Windows n'est qu'un lanceur du vrai `git.exe`), qui gardent les pipes ouverts jusqu'à la fin du transfert. `kill_tree` utilise `taskkill /T /F` sous Windows et, sous Unix, `kill -KILL -<pgid>` sur le groupe créé par `process_group(0)`.
+- **Annulation** : `child.kill()` ne tue que le premier processus. `git` délègue le réseau à des helpers (et `cmd\git.exe` sous Windows n'est qu'un lanceur du vrai `git.exe`), qui gardent les pipes ouverts jusqu'à la fin du transfert. `kill_tree` utilise `taskkill /T /F` sous Windows et, sous Unix, `libc::killpg` sur le groupe créé par `process_group(0)` (pas la commande `kill` externe : sa syntaxe pour un groupe varie selon les systèmes).
+- **Chemins temporaires dans les tests** : sur le runner Windows de la CI, `TEMP` est en forme courte (`RUNNER~1`) alors que libgit2 renvoie la forme longue. Comparer des chemins après `fs::canonicalize`.
 - **Commandes Tauri** : une commande non `async` s'exécute sur le thread principal et fige l'UI. Utiliser `#[tauri::command(async)]` pour tout appel Git.
 - **`cargo test -p gitui`** échoue sous Windows au chargement du binaire de test (`STATUS_ENTRYPOINT_NOT_FOUND`). Les tests vivent dans `gitui-core` et `gitui-forge` ; ne pas mettre de `#[test]` dans `src-tauri`.
 - **Heredoc Bash** : écrire du Rust/TS via un heredoc transforme `\n`, `\r` en vrais retours à la ligne. Écrire les fichiers de code avec les outils Write/Edit.
