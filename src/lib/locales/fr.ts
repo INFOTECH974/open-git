@@ -37,6 +37,8 @@ export const fr: Record<string, string> = {
   "Connect a GitHub account to pick from your repositories.":
     "Connectez un compte GitHub pour choisir parmi vos dépôts.",
   "Connect": "Connecter",
+  "Account to clone with: {login}": "Compte utilisé pour cloner : {login}",
+  "Clone with the account": "Cloner avec le compte",
   "Private": "Privé",
   "Archived": "Archivé",
   "Create a repository": "Créer un dépôt",
@@ -52,6 +54,9 @@ export const fr: Record<string, string> = {
   "Switch to French": "Passer en français",
   "GitHub: {login}": "GitHub : {login}",
   "Connect a GitHub account": "Connecter un compte GitHub",
+  "GitHub accounts": "Comptes GitHub",
+  "Connect another account…": "Connecter un autre compte…",
+  "Manage the accounts…": "Gérer les comptes…",
   "Dismiss": "Fermer",
   "Cancel": "Annuler",
 
@@ -285,13 +290,19 @@ export const fr: Record<string, string> = {
   "Only a local branch can be rebased.": "Seule une branche locale peut être rebasée.",
 
   // ---- GitHub --------------------------------------------------------------
-  "GitHub account": "Compte GitHub",
-  "Workflow runs, pull requests and issues of your repositories are available in the left panel.":
-    "Les exécutions des workflows, les pull requests et les issues de vos dépôts sont disponibles dans le panneau de gauche.",
+  "A repository uses the account it was cloned with or given, else its owner's when it is one of these, else the active account.":
+    "Un dépôt utilise le compte avec lequel il a été cloné ou qu'on lui a donné, sinon celui de son propriétaire s'il est dans cette liste, sinon le compte actif.",
+  "The account you connect becomes the active one; the others stay connected.":
+    "Le compte que vous connectez devient le compte actif ; les autres restent connectés.",
   "Connect an account to follow the workflow runs, and to list and create pull requests and issues.":
     "Connectez un compte pour suivre les exécutions des workflows, et pour lister et créer des pull requests et des issues.",
   "Open the profile": "Ouvrir le profil",
-  "Sign out": "Se déconnecter",
+  "Active": "Actif",
+  "Make active": "Rendre actif",
+  "Sign out of {login}": "Déconnecter {login}",
+  "Connect another account": "Connecter un autre compte",
+  "GitHub connects the account your browser is signed in to: to add a different one, switch account on github.com first.":
+    "GitHub connecte le compte avec lequel votre navigateur est connecté : pour en ajouter un autre, changez d'abord de compte sur github.com.",
   "Enter this code on GitHub, then come back here. The page opened in your browser; if not, open it below.":
     "Saisissez ce code sur GitHub, puis revenez ici. La page s'est ouverte dans votre navigateur ; sinon, ouvrez-la ci-dessous.",
   "Open": "Ouvrir",
@@ -306,6 +317,11 @@ export const fr: Record<string, string> = {
   "Sign in": "Se connecter",
   "is on GitHub.": "est sur GitHub.",
   "Connect your GitHub account": "Connecter votre compte GitHub",
+  "GitHub account of this repository: {login}": "Compte GitHub de ce dépôt : {login}",
+  "Account for this repository": "Compte pour ce dépôt",
+  "Automatic": "Automatique",
+  "Its owner's account when connected, else the active one":
+    "Celui de son propriétaire s'il est connecté, sinon le compte actif",
   "Pull requests": "Pull requests",
   "New pull request": "Nouvelle pull request",
   "Open on GitHub": "Ouvrir sur GitHub",

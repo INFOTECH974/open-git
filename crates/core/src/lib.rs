@@ -19,7 +19,7 @@ pub use commit::{CommitDetails, FileChange, FileStatus, Signature};
 pub use contents::FileContents;
 pub use diff::{DiffLine, DiffLineKind, FileDiff, Hunk};
 pub use error::{Error, Result};
-pub use exec::{ASKPASS_ENV, CancelToken, set_askpass};
+pub use exec::{ASKPASS_ENV, CancelToken, add_config, set_askpass};
 pub use graph::{GraphRow, LaneRef, RowLayout};
 pub use ops::{ConflictSide, RepoState, StashEntry};
 pub use refs::{RefInfo, RefKind};

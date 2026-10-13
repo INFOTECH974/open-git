@@ -1,8 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { CircleArrowUp, CircleUser, Download, Languages, Monitor, Moon, Sparkles, Sun, X } from "lucide-react";
+import {
+  CircleArrowUp,
+  CircleUser,
+  Download,
+  Languages,
+  Monitor,
+  Moon,
+  Sparkles,
+  Sun,
+  UserPlus,
+  Users,
+  X,
+} from "lucide-react";
 
 import type { RepoInfo } from "@/bindings";
+import { AccountAvatar } from "@/components/AccountAvatar";
 import { AiSettingsDialog } from "@/components/AiSettingsDialog";
 import { CloneDialog } from "@/components/dialogs/CloneDialog";
 import { FormDialog, type FormRequest } from "@/components/dialogs/FormDialog";
@@ -13,6 +26,16 @@ import { OpenMenu } from "@/components/OpenMenu";
 import { RepositoryView } from "@/components/RepositoryView";
 import { TabBar } from "@/components/TabBar";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { UpdateDialog } from "@/components/UpdateDialog";
 import { AiProvider, modelLabel, useAi } from "@/lib/ai";
@@ -187,12 +210,12 @@ function Shell() {
   }, [openPath, t]);
 
   const clone = useCallback(
-    async (url: string, destination: string) => {
+    async (url: string, destination: string, account: string | null) => {
       setCloneError(null);
       setCloneJob({ url, destination, message: "", percent: null });
       setOpening(true);
       try {
-        show(await api.cloneRepository(url, destination));
+        show(await api.cloneRepository(url, destination, account));
         setCloneOpen(false);
       } catch (failure) {
         if (!isCancelled(failure)) {
@@ -359,7 +382,7 @@ function Shell() {
         open={cloneOpen}
         job={cloneJob}
         error={cloneError}
-        onClone={(url, destination) => void clone(url, destination)}
+        onClone={(url, destination, account) => void clone(url, destination, account)}
         onCancel={() => cloneJob && void api.cancelOperation(cloneJob.destination)}
         onClose={() => setCloneOpen(false)}
       />
@@ -395,37 +418,71 @@ function UpdateButton() {
   );
 }
 
-/** Opens the GitHub account dialog; shows the avatar once signed in. */
+/**
+ * The GitHub accounts: shows the active one, and opens the menu that switches to
+ * another, connects one more or manages them. Without any account it opens the
+ * dialog that connects one.
+ */
 function AccountButton() {
   const { t } = useI18n();
   const github = useGitHub();
-  const label = github.account
-    ? t("GitHub: {login}", { login: github.account.login })
-    : t("Connect a GitHub account");
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          className="text-muted-foreground"
-          aria-label={label}
-          onClick={github.openDialog}
-        >
-          {github.account ? (
-            <img
-              src={github.account.avatarUrl}
-              alt=""
-              className="size-5 rounded-full bg-muted"
-              referrerPolicy="no-referrer"
-            />
-          ) : (
+  const active = github.account;
+  if (!active) {
+    const label = t("Connect a GitHub account");
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="text-muted-foreground"
+            aria-label={label}
+            onClick={() => github.openDialog()}
+          >
             <CircleUser />
-          )}
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent>{label}</TooltipContent>
-    </Tooltip>
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{label}</TooltipContent>
+      </Tooltip>
+    );
+  }
+  const label = t("GitHub: {login}", { login: active.login });
+  return (
+    <DropdownMenu>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon-sm" className="text-muted-foreground" aria-label={label}>
+              <AccountAvatar account={active} className="size-5" />
+            </Button>
+          </DropdownMenuTrigger>
+        </TooltipTrigger>
+        <TooltipContent>{label}</TooltipContent>
+      </Tooltip>
+      <DropdownMenuContent align="end" className="w-64">
+        <DropdownMenuLabel>{t("GitHub accounts")}</DropdownMenuLabel>
+        <DropdownMenuRadioGroup
+          value={active.login}
+          onValueChange={(login) => void github.switchAccount(login)}
+        >
+          {github.accounts.map((account) => (
+            <DropdownMenuRadioItem key={account.login} value={account.login}>
+              <AccountAvatar account={account} className="size-5" />
+              <span className="truncate">{account.login}</span>
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={() => github.openDialog("add")}>
+          <UserPlus />
+          {t("Connect another account…")}
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => github.openDialog("accounts")}>
+          <Users />
+          {t("Manage the accounts…")}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 

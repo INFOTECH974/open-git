@@ -86,6 +86,12 @@ pub struct RemoteCommand {
 }
 
 impl RemoteCommand {
+    /// What is added to the environment `git` inherits, for the caller to extend
+    /// (see [`crate::add_config`]).
+    pub fn env_mut(&mut self) -> &mut Vec<(OsString, OsString)> {
+        &mut self.env
+    }
+
     /// Runs the command, reporting the lines `git` prints; `token` stops it.
     pub fn run(&self, token: &CancelToken, progress: Progress<'_>) -> Result<()> {
         let args: Vec<&str> = self.args.iter().map(String::as_str).collect();
@@ -517,6 +523,30 @@ impl Repo {
             Ok(remote) => Ok(Some(remote.url()?.to_owned())),
             Err(error) if error.code() == ErrorCode::NotFound => Ok(None),
             Err(error) => Err(error.into()),
+        }
+    }
+
+    /// The value of configuration variable `name`, wherever it is set: this
+    /// repository, the user's configuration or the system's.
+    pub fn config_value(&self, name: &str) -> Result<Option<String>> {
+        match self.git.config()?.get_string(name) {
+            Ok(value) => Ok(Some(value)),
+            Err(error) if error.code() == ErrorCode::NotFound => Ok(None),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    /// Sets `name` in the configuration of this repository alone; `None` removes it.
+    pub fn set_config_value(&self, name: &str, value: Option<&str>) -> Result<()> {
+        let result = match value {
+            Some(value) => self.run_git(&["config", "--local", name, value], None),
+            None => self.run_git(&["config", "--local", "--unset-all", name], None),
+        };
+        match result {
+            Ok(_) => Ok(()),
+            // `git config --unset-all` on a variable that is not set.
+            Err(Error::Command { code: Some(5), .. }) if value.is_none() => Ok(()),
+            Err(error) => Err(error),
         }
     }
 

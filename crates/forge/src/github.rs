@@ -12,8 +12,8 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::{GitHubRepo, Result};
 
-/// The signed-in user.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+/// A signed-in user.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct Account {

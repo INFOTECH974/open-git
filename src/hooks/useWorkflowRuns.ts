@@ -3,7 +3,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { WorkflowRun } from "@/bindings";
 import { api, errorMessage } from "@/lib/api";
 import { type CommitChecks, checksByCommit, isRunning } from "@/lib/checks";
-import { useGitHub } from "@/lib/github";
 
 /** While a run is queued or in progress, GitHub is asked again this often. */
 export const LIVE_POLL_MS = 5_000;
@@ -30,38 +29,27 @@ export interface WorkflowRuns {
  * desktop application, so it is asked again and again: every few seconds while
  * something runs or was just pushed, every minute otherwise, and only for the
  * visible tab of a visible window. `remoteTips` is any string that changes when
- * a remote branch moves, which is when new runs are to be expected.
+ * a remote branch moves, which is when new runs are to be expected. `account` is
+ * the login of the account that works on the repository on GitHub, `null` when
+ * there is none or the repository is elsewhere.
  */
-export function useWorkflowRuns(path: string, active: boolean, remoteTips: string): WorkflowRuns {
-  const { account } = useGitHub();
-  const [onGitHub, setOnGitHub] = useState(false);
+export function useWorkflowRuns(
+  path: string,
+  active: boolean,
+  remoteTips: string,
+  account: string | null,
+): WorkflowRuns {
   const [runs, setRuns] = useState<WorkflowRun[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [reloads, setReloads] = useState(0);
   const expectingUntil = useRef(0);
 
+  // What one account was shown is not what another may see.
   useEffect(() => {
-    let cancelled = false;
-    api.githubRepository(path).then(
-      (found) => {
-        if (!cancelled) setOnGitHub(found !== null);
-      },
-      () => {
-        if (!cancelled) setOnGitHub(false);
-      },
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, [path]);
-
-  const signedIn = account !== null;
-  useEffect(() => {
-    if (signedIn) return;
     setRuns(null);
     setError(null);
-  }, [signedIn]);
+  }, [account]);
 
   const reload = useCallback(() => setReloads((value) => value + 1), []);
 
@@ -76,7 +64,7 @@ export function useWorkflowRuns(path: string, active: boolean, remoteTips: strin
     reload();
   }, [remoteTips, reload]);
 
-  const enabled = active && onGitHub && signedIn;
+  const enabled = active && account !== null;
   useEffect(() => {
     if (!enabled) return;
     let stopped = false;
@@ -128,7 +116,7 @@ export function useWorkflowRuns(path: string, active: boolean, remoteTips: strin
       document.removeEventListener("visibilitychange", onVisible);
       setLoading(false);
     };
-  }, [enabled, path, reloads]);
+  }, [enabled, path, account, reloads]);
 
   const byCommit = useMemo(() => checksByCommit(runs ?? []), [runs]);
 

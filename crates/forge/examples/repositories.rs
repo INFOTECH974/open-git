@@ -1,8 +1,8 @@
-//! Asks the real GitHub what the account stored in the keychain can clone:
+//! Asks the real GitHub what the active account of the keychain can clone:
 //! `cargo run -p open-git-forge --example repositories -- 10` prints the ten most
 //! recently pushed repositories; without a number, only how many there are.
 
-use open_git_forge::{GitHub, load_token};
+use open_git_forge::{GitHub, credentials};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -11,11 +11,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(|count| count.parse::<usize>())
         .transpose()?
         .unwrap_or(0);
-    let Some(token) = load_token()? else {
+    let Some(active) = credentials()?.into_iter().next() else {
         println!("no account is stored; sign in from the application first");
         return Ok(());
     };
-    let github = GitHub::connect(&token)?;
+    let github = GitHub::connect(&active.token)?;
     println!("account: {}", github.account().await?.login);
 
     let repositories = github.repositories().await?;

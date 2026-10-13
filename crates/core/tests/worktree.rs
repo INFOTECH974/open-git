@@ -8,7 +8,8 @@ use std::{ffi::OsString, fs, path::Path, process::Command, time::Duration};
 
 use git2::{IndexAddOption, Oid, Repository, RepositoryInitOptions, Signature, Time};
 use open_git_core::{
-    ConflictSide, DiffLineKind, Error, FileStatus, RefKind, Repo, RepoState, StatusEntry,
+    CancelToken, ConflictSide, DiffLineKind, Error, FileStatus, RefKind, Repo, RepoState,
+    StatusEntry, add_config,
 };
 use tempfile::TempDir;
 
@@ -528,6 +529,55 @@ fn background_fetch_follows_a_branch_moved_on_the_remote() {
         fetch.run_within(Duration::ZERO),
         Err(Error::Cancelled)
     ));
+}
+
+#[test]
+fn a_remote_command_takes_extra_configuration() {
+    let fixture = Fixture::new();
+    let remote_dir = tempfile::tempdir().unwrap();
+    let remote = Repository::init_bare(remote_dir.path()).unwrap();
+    remote.set_head("refs/heads/main").unwrap();
+    let remote_url = remote_dir.path().to_string_lossy().replace('\\', "/");
+    // `origin` leads nowhere: only configuration given to the command finds the remote.
+    fixture.git().remote("origin", "nowhere/remote").unwrap();
+    let repo = fixture.repo();
+
+    let push = repo.push_command().unwrap();
+    assert!(push.run(&CancelToken::new(), &mut |_| {}).is_err());
+
+    let mut push = repo.push_command().unwrap();
+    add_config(
+        push.env_mut(),
+        &format!("url.{remote_url}.insteadOf"),
+        "nowhere/remote",
+    );
+    add_config(push.env_mut(), "open-git-test.unused", "second value");
+    push.run(&CancelToken::new(), &mut |_| {}).unwrap();
+    assert_eq!(
+        remote.find_reference("refs/heads/main").unwrap().target(),
+        Some(fixture.initial)
+    );
+}
+
+#[test]
+fn a_configuration_value_is_set_read_and_removed() {
+    const NAME: &str = "open-git-test.account";
+    let fixture = Fixture::new();
+    let repo = fixture.repo();
+    assert_eq!(repo.config_value(NAME).unwrap(), None);
+
+    repo.set_config_value(NAME, Some("ada")).unwrap();
+    assert_eq!(repo.config_value(NAME).unwrap().as_deref(), Some("ada"));
+    repo.set_config_value(NAME, Some("grace")).unwrap();
+    assert_eq!(repo.config_value(NAME).unwrap().as_deref(), Some("grace"));
+    // It is kept in the repository itself, not in the user's configuration.
+    let local = fixture.read(".git/config");
+    assert!(local.contains("account = grace"), "{local}");
+
+    repo.set_config_value(NAME, None).unwrap();
+    assert_eq!(repo.config_value(NAME).unwrap(), None);
+    // Removing what is not set is not a failure.
+    repo.set_config_value(NAME, None).unwrap();
 }
 
 #[test]

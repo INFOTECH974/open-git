@@ -2,6 +2,7 @@ import { type ComponentType, type ReactNode, type Ref, useEffect, useState } fro
 import {
   ChevronDown,
   ChevronRight,
+  ChevronsUpDown,
   CircleCheck,
   CircleDot,
   CircleUser,
@@ -18,7 +19,8 @@ import {
   RefreshCw,
 } from "lucide-react";
 
-import type { GitHubRepo, Issue, ItemState, PullRequest, WorkflowRun } from "@/bindings";
+import type { Issue, ItemState, PullRequest, WorkflowRun } from "@/bindings";
+import { AccountAvatar } from "@/components/AccountAvatar";
 import { Button } from "@/components/ui/button";
 import {
   ContextMenu,
@@ -27,11 +29,19 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { type WorkflowRunAction, WorkflowRunsSection } from "@/components/WorkflowRunsSection";
 import type { WorkflowRuns } from "@/hooks/useWorkflowRuns";
 import { api, errorMessage } from "@/lib/api";
 import { relativeTime } from "@/lib/format";
-import { useGitHub } from "@/lib/github";
+import { type RepositoryLink, useGitHub } from "@/lib/github";
 import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
@@ -40,6 +50,10 @@ export type IssueAction = "open" | "branch" | "comment" | "close" | "copyUrl";
 
 interface Props {
   repoPath: string;
+  /** Where the repository lives on GitHub and the account that works on it. */
+  forge: RepositoryLink;
+  /** Gives the repository an account of its own; `null` returns to the automatic choice. */
+  onChooseAccount(login: string | null): void;
   /** Whether this repository's tab is the one shown. */
   active: boolean;
   /** Bumped by the parent after an action, so the lists reload. */
@@ -62,6 +76,8 @@ interface Props {
  */
 export function ForgePanel({
   repoPath,
+  forge,
+  onChooseAccount,
   active,
   version,
   busy,
@@ -76,31 +92,16 @@ export function ForgePanel({
 }: Props) {
   const { t } = useI18n();
   const github = useGitHub();
-  const [repo, setRepo] = useState<GitHubRepo | null | undefined>(undefined);
+  const { link, account } = forge;
 
-  useEffect(() => {
-    let cancelled = false;
-    api.githubRepository(repoPath).then(
-      (found) => {
-        if (!cancelled) setRepo(found);
-      },
-      () => {
-        if (!cancelled) setRepo(null);
-      },
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, [repoPath]);
+  if (!link) return null;
 
-  if (repo === undefined || repo === null) return null;
-
-  if (!github.account) {
+  if (!account) {
     return (
       <section className="mt-2 border-t px-3 py-3">
         <p className="text-xs text-muted-foreground">
           <code className="font-mono">
-            {repo.owner}/{repo.name}
+            {link.repo.owner}/{link.repo.name}
           </code>{" "}
           {t("is on GitHub.")}
         </p>
@@ -108,7 +109,7 @@ export function ForgePanel({
           variant="outline"
           size="xs"
           className="mt-2"
-          onClick={github.openDialog}
+          onClick={() => github.openDialog()}
           disabled={github.loading}
         >
           <CircleUser />
@@ -120,7 +121,47 @@ export function ForgePanel({
 
   return (
     <div className="mt-2 border-t pt-1">
+      {github.accounts.length > 1 && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              className="flex w-full items-center gap-1.5 px-2 py-1 text-left text-xs text-muted-foreground hover:text-foreground"
+              aria-label={t("GitHub account of this repository: {login}", { login: account.login })}
+              title={t("GitHub account of this repository: {login}", { login: account.login })}
+            >
+              <AccountAvatar account={account} className="size-4" />
+              <span className="min-w-0 flex-1 truncate">{account.login}</span>
+              <ChevronsUpDown className="size-3 shrink-0" aria-hidden />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent className="w-72">
+            <DropdownMenuLabel>{t("Account for this repository")}</DropdownMenuLabel>
+            <DropdownMenuRadioGroup
+              value={link.bound ?? ""}
+              onValueChange={(login) => onChooseAccount(login || null)}
+            >
+              <DropdownMenuRadioItem value="">
+                <span className="flex min-w-0 flex-col">
+                  <span>{t("Automatic")}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {t("Its owner's account when connected, else the active one")}
+                  </span>
+                </span>
+              </DropdownMenuRadioItem>
+              {github.accounts.map((candidate) => (
+                <DropdownMenuRadioItem key={candidate.login} value={candidate.login}>
+                  <AccountAvatar account={candidate} className="size-5" />
+                  <span className="truncate">{candidate.login}</span>
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
+      {/* Each section is keyed by the account: what another one may see is loaded afresh. */}
       <WorkflowRunsSection
+        key={`runs ${account.login}`}
         repoPath={repoPath}
         active={active}
         workflows={workflows}
@@ -129,6 +170,7 @@ export function ForgePanel({
         onOpenUrl={onOpenUrl}
       />
       <ForgeSection<PullRequest>
+        key={`pulls ${account.login}`}
         title={t("Pull requests")}
         icon={GitPullRequest}
         load={(state) => api.githubPullRequests(repoPath, state)}
@@ -169,6 +211,7 @@ export function ForgePanel({
         )}
       />
       <ForgeSection<Issue>
+        key={`issues ${account.login}`}
         title={t("Issues")}
         icon={CircleDot}
         load={(state) => api.githubIssues(repoPath, state)}

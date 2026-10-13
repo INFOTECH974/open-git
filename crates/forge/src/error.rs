@@ -10,6 +10,8 @@ pub enum Error {
     NotGitHub { url: String },
     #[error("no GitHub account is connected")]
     SignedOut,
+    #[error("`{login}` is not a connected GitHub account")]
+    UnknownAccount { login: String },
     #[error("GitHub sign-in is not configured for this build (no OAuth client id)")]
     NoClientId,
     #[error("GitHub sign-in failed: {0}")]

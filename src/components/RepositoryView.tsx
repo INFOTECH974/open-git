@@ -61,7 +61,7 @@ import { isClean, useRepository } from "@/hooks/useRepository";
 import { useWorkflowRuns } from "@/hooks/useWorkflowRuns";
 import { api, errorMessage } from "@/lib/api";
 import { shortId } from "@/lib/format";
-import { branchNameForIssue } from "@/lib/github";
+import { branchNameForIssue, useRepositoryLink } from "@/lib/github";
 import { useI18n } from "@/lib/i18n";
 
 type DiffTarget =
@@ -489,7 +489,8 @@ export function RepositoryView({ info, active }: Props) {
         .join(" "),
     [repo.refs],
   );
-  const workflows = useWorkflowRuns(path, active, remoteTips);
+  const forge = useRepositoryLink(path);
+  const workflows = useWorkflowRuns(path, active, remoteTips, forge.account?.login ?? null);
   const workflowsRef = useRef<HTMLElement>(null);
   const openOnGitHub = (url: string) => void openUrl(url).catch(report);
 
@@ -827,6 +828,8 @@ export function RepositoryView({ info, active }: Props) {
                 >
                   <ForgePanel
                     repoPath={path}
+                    forge={forge}
+                    onChooseAccount={(login) => void forge.setAccount(login).catch(report)}
                     active={active}
                     version={forgeVersion}
                     busy={busy}

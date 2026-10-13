@@ -4,7 +4,7 @@ use std::{
 };
 
 use open_git_core::{CancelToken, Repo};
-use open_git_forge::{Account, GitHub};
+use open_git_forge::{Accounts, GitHub, account_token, load_accounts};
 use tauri::AppHandle;
 
 use crate::{
@@ -14,11 +14,17 @@ use crate::{
 
 type Shared<T> = Arc<Mutex<T>>;
 
-/// The connected GitHub account and its API client.
-#[derive(Clone)]
-pub struct GitHubSession {
-    pub client: GitHub,
-    pub account: Account,
+/// The connected GitHub accounts and the API client of each one that was used.
+#[derive(Default)]
+struct GitHubState {
+    /// Whether the keychain was read: it is asked once, not before every fetch.
+    read: bool,
+    /// What the keychain lists; `None` as long as it lists nothing a version
+    /// that knows several accounts wrote.
+    accounts: Option<Accounts>,
+    /// By login. A client keeps the answers GitHub gave it (see `GitHub::poll`),
+    /// which are those of its account.
+    clients: HashMap<String, GitHub>,
 }
 
 /// The repositories the user has opened, keyed by the path `RepoInfo::path` reports.
@@ -32,7 +38,7 @@ pub struct AppState {
     watchers: Mutex<HashMap<String, RepoWatcher>>,
     /// The network operation running per path (a clone is keyed by its destination).
     operations: Mutex<HashMap<String, CancelToken>>,
-    github: Mutex<Option<GitHubSession>>,
+    github: Mutex<GitHubState>,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -99,11 +105,42 @@ impl AppState {
         }
     }
 
-    pub fn github(&self) -> Option<GitHubSession> {
-        lock(&self.github).clone()
+    /// The connected GitHub accounts, read from the keychain on first use.
+    /// `None` when no account was ever connected by a version that knows several.
+    pub fn github_accounts(&self) -> open_git_forge::Result<Option<Accounts>> {
+        let mut github = lock(&self.github);
+        if !github.read {
+            github.accounts = load_accounts()?;
+            github.read = true;
+        }
+        Ok(github.accounts.clone())
     }
 
-    pub fn set_github(&self, session: Option<GitHubSession>) {
-        *lock(&self.github) = session;
+    /// Takes note of what the keychain now lists. The clients of the accounts
+    /// that left are dropped, and `client` is kept for the account named with it.
+    pub fn set_github_accounts(&self, accounts: Accounts, client: Option<(String, GitHub)>) {
+        let mut github = lock(&self.github);
+        github
+            .clients
+            .retain(|login, _| accounts.find(login).is_some());
+        if let Some((login, client)) = client {
+            github.clients.insert(login, client);
+        }
+        github.accounts = Some(accounts);
+        github.read = true;
+    }
+
+    /// The API client of the connected account `login`, built from its token the
+    /// first time. Call it from an `async` command: the client needs the runtime.
+    pub fn github_client(&self, login: &str) -> open_git_forge::Result<GitHub> {
+        if let Some(client) = lock(&self.github).clients.get(login) {
+            return Ok(client.clone());
+        }
+        let token = account_token(login)?.ok_or(open_git_forge::Error::SignedOut)?;
+        let client = GitHub::connect(&token)?;
+        lock(&self.github)
+            .clients
+            .insert(login.to_owned(), client.clone());
+        Ok(client)
     }
 }

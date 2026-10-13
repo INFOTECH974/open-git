@@ -5,7 +5,9 @@
 //! no credential helper provides, it starts this same executable with the prompt
 //! as its only argument and `OPEN_GIT_ASKPASS` in the environment, and reads the
 //! answer on stdout. The GitHub token comes from the system keychain, so it is
-//! never passed through the environment or the command line.
+//! never passed through the environment or the command line; with several
+//! accounts connected, only the login of the one to answer for is
+//! (`OPEN_GIT_ACCOUNT`, see `github::act_as`).
 
 use std::io::Write;
 
@@ -23,8 +25,12 @@ pub fn request() -> Option<String> {
 /// Prints the answer to `prompt` and exits. Without an answer the process fails,
 /// and `git` reports the missing credentials as it would without a helper.
 pub fn run(prompt: &str) -> ! {
-    let answer =
-        open_git_forge::answer_prompt(prompt, || open_git_forge::load_token().ok().flatten());
+    let wanted = std::env::var(open_git_forge::ACCOUNT_ENV)
+        .ok()
+        .filter(|login| !login.is_empty());
+    let answer = open_git_forge::answer_prompt(prompt, wanted.as_deref(), || {
+        open_git_forge::credentials().unwrap_or_default()
+    });
     match answer {
         Some(line) => {
             let mut stdout = std::io::stdout().lock();

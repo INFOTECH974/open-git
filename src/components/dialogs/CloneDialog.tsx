@@ -1,10 +1,29 @@
-import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { Archive, BookMarked, FolderOpen, GitFork, LoaderCircle, Lock, RefreshCw, Search } from "lucide-react";
+import {
+  Archive,
+  BookMarked,
+  ChevronsUpDown,
+  FolderOpen,
+  GitFork,
+  LoaderCircle,
+  Lock,
+  RefreshCw,
+  Search,
+} from "lucide-react";
 
 import type { RemoteRepository } from "@/bindings";
+import { AccountAvatar } from "@/components/AccountAvatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Dialog,
   DialogContent,
@@ -39,7 +58,8 @@ interface Props {
   job: CloneJob | null;
   /** Why the last clone failed. */
   error: string | null;
-  onClone(url: string, destination: string): void;
+  /** `account` is the login of the GitHub account to clone with, when one is connected. */
+  onClone(url: string, destination: string, account: string | null): void;
   /** Stops the clone under way. */
   onCancel(): void;
   /** Closes the dialog; a clone under way carries on. */
@@ -61,28 +81,38 @@ export function CloneDialog({ open, job, error, onClone, onCancel, onClose }: Pr
   const [repositories, setRepositories] = useState<RemoteRepository[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
+  // The account picked in this dialog; the active one until another is.
+  const [picked, setPicked] = useState<string | null>(null);
+  const request = useRef(0);
 
-  const login = github.account?.login ?? null;
+  const account = github.accounts.find((candidate) => candidate.login === picked) ?? github.account;
+  const login = account?.login ?? null;
 
   const loadRepositories = useCallback(() => {
+    if (!login) return;
+    const asked = ++request.current;
     setLoading(true);
     setListError(null);
-    api.githubRepositories().then(
+    api.githubRepositories(login).then(
       (found) => {
+        if (request.current !== asked) return;
         setRepositories(found);
         setLoading(false);
       },
       (failure) => {
+        if (request.current !== asked) return;
         setListError(errorMessage(failure));
         setLoading(false);
       },
     );
-  }, []);
+  }, [login]);
 
-  // Another account sees other repositories.
+  // Another account sees other repositories; an answer on its way is not for it.
   useEffect(() => {
+    request.current += 1;
     setRepositories(null);
     setListError(null);
+    setLoading(false);
   }, [login]);
 
   useEffect(() => {
@@ -96,6 +126,7 @@ export function CloneDialog({ open, job, error, onClone, onCancel, onClose }: Pr
     setUrl("");
     setName("");
     setFilter("");
+    setPicked(null);
     // Only when the dialog opens.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -121,7 +152,7 @@ export function CloneDialog({ open, job, error, onClone, onCancel, onClose }: Pr
     } catch {
       // Storage may be unavailable; the folder is then asked again next time.
     }
-    onClone(url.trim(), joinPath(parent.trim(), name.trim() || derivedName));
+    onClone(url.trim(), joinPath(parent.trim(), name.trim() || derivedName), login);
   };
 
   return (
@@ -144,10 +175,47 @@ export function CloneDialog({ open, job, error, onClone, onCancel, onClose }: Pr
               </p>
             )}
 
-            {login ? (
+            {account ? (
               <div className="grid gap-1.5">
-                <div className="flex items-center justify-between gap-2">
-                  <Label htmlFor="clone-filter">{t("Your GitHub repositories")}</Label>
+                <div className="flex items-center gap-2">
+                  <Label htmlFor="clone-filter" className="mr-auto">
+                    {t("Your GitHub repositories")}
+                  </Label>
+                  {github.accounts.length > 1 && (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="xs"
+                          className="max-w-48"
+                          aria-label={t("Account to clone with: {login}", { login: account.login })}
+                        >
+                          <AccountAvatar account={account} className="size-4" />
+                          <span className="truncate">{account.login}</span>
+                          <ChevronsUpDown className="text-muted-foreground" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-64">
+                        <DropdownMenuLabel>{t("Clone with the account")}</DropdownMenuLabel>
+                        <DropdownMenuRadioGroup
+                          value={account.login}
+                          onValueChange={(next) => {
+                            setPicked(next);
+                            setUrl("");
+                            setName("");
+                          }}
+                        >
+                          {github.accounts.map((candidate) => (
+                            <DropdownMenuRadioItem key={candidate.login} value={candidate.login}>
+                              <AccountAvatar account={candidate} className="size-5" />
+                              <span className="truncate">{candidate.login}</span>
+                            </DropdownMenuRadioItem>
+                          ))}
+                        </DropdownMenuRadioGroup>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  )}
                   <Button
                     type="button"
                     variant="ghost"
@@ -204,7 +272,7 @@ export function CloneDialog({ open, job, error, onClone, onCancel, onClose }: Pr
             ) : (
               <p className="flex items-center justify-between gap-2 rounded-md border bg-muted/40 px-2 py-1.5 text-sm text-muted-foreground">
                 {t("Connect a GitHub account to pick from your repositories.")}
-                <Button type="button" variant="outline" size="sm" onClick={github.openDialog}>
+                <Button type="button" variant="outline" size="sm" onClick={() => github.openDialog()}>
                   {t("Connect")}
                 </Button>
               </p>

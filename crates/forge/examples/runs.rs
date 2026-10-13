@@ -1,12 +1,12 @@
 //! Asks the real GitHub what its Actions are doing for a repository, with the
-//! account stored in the keychain:
+//! active account of the keychain:
 //! `cargo run -p open-git-forge --example runs -- owner/name` prints the latest
 //! workflow runs, then the jobs and steps of the newest one. A number after the
 //! repository asks again that many times, five seconds apart, as the UI does.
 
 use std::time::Duration;
 
-use open_git_forge::{GitHub, GitHubRepo, load_token};
+use open_git_forge::{GitHub, GitHubRepo, credentials};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -23,11 +23,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(|times| times.parse::<usize>())
         .transpose()?
         .unwrap_or(1);
-    let Some(token) = load_token()? else {
+    let Some(active) = credentials()?.into_iter().next() else {
         println!("no account is stored; sign in from the application first");
         return Ok(());
     };
-    let github = GitHub::connect(&token)?;
+    let github = GitHub::connect(&active.token)?;
     let repo = GitHubRepo { owner, name };
 
     for round in 0..times {

@@ -13,7 +13,7 @@ use open_git_core::{
 use tauri::{AppHandle, State};
 use tauri_plugin_opener::OpenerExt;
 
-use crate::{error::Result, progress, state::AppState};
+use crate::{error::Result, github, progress, state::AppState};
 
 // ---- repositories ---------------------------------------------------------------
 
@@ -48,6 +48,7 @@ pub fn init_repository(
 
 /// Clones `url` into `destination` with the user's `git` and opens the clone.
 /// Progress is emitted with `destination` as the path; `cancel_operation` stops it.
+/// A clone from GitHub is made as the connected account `account`, and keeps it.
 #[tauri::command(async)]
 #[specta::specta]
 pub fn clone_repository(
@@ -55,17 +56,30 @@ pub fn clone_repository(
     state: State<'_, AppState>,
     url: String,
     destination: String,
+    account: Option<String>,
 ) -> Result<RepoInfo> {
-    let repo = state.with_operation(&destination, |token| {
+    let account = github::clone_account(&state, &url, account.as_deref());
+    let mut env = Vec::new();
+    if let Some(login) = &account {
+        github::act_as(&state, login, &mut env);
+    }
+    let mut repo = state.with_operation(&destination, |token| {
         let mut report = progress::reporter(app.clone(), destination.clone(), "clone");
         Ok(Repo::clone_with_progress(
             &url,
             &destination,
-            Vec::new(),
+            env,
             token,
             &mut report,
         )?)
     })?;
+    // Whose clone this is was said for that one command; later ones ask again.
+    repo.set_git_env(Vec::new());
+    if let Some(login) = &account
+        && let Err(error) = github::bind(&repo, login)
+    {
+        eprintln!("open-git: cannot record the account of {destination}: {error}");
+    }
     register(&app, &state, repo)
 }
 
@@ -547,7 +561,8 @@ pub fn stash_drop(state: State<'_, AppState>, path: String, index: u32) -> Resul
 
 /// Runs a command that talks to a remote: its progress goes to the frontend as
 /// `operation`, `cancel_operation` stops it, and the repository stays free for
-/// other commands while `git` is on the network.
+/// other commands while `git` is on the network. On GitHub it acts as the account
+/// that works on the repository.
 fn run_remote(
     app: &AppHandle,
     state: &AppState,
@@ -555,7 +570,8 @@ fn run_remote(
     operation: &'static str,
     prepare: impl FnOnce(&Repo) -> open_git_core::Result<RemoteCommand>,
 ) -> Result<()> {
-    let command = state.with_repo(path, |repo| prepare(repo))?;
+    let mut command = state.with_repo(path, |repo| prepare(repo))?;
+    github::identify(state, path, command.env_mut());
     let result = state.with_operation(path, |token| {
         let mut report = progress::reporter(app.clone(), path.to_owned(), operation);
         Ok(command.run(token, &mut report)?)
@@ -585,8 +601,9 @@ const BACKGROUND_FETCH_TIMEOUT: Duration = Duration::from_secs(45);
 #[tauri::command(async)]
 #[specta::specta]
 pub fn fetch_in_background(state: State<'_, AppState>, path: String) -> Result<bool> {
-    let (fetch, before) =
+    let (mut fetch, before) =
         state.with_repo(&path, |repo| Ok((repo.background_fetch()?, repo.refs()?)))?;
+    github::identify(&state, &path, fetch.env_mut());
     fetch.run_within(BACKGROUND_FETCH_TIMEOUT)?;
     let after = state.with_repo(&path, |repo| repo.refs())?;
     Ok(before != after)

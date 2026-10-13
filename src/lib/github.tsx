@@ -1,21 +1,35 @@
 import { type ReactNode, createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 
-import type { Account, DeviceCode, DeviceStatus } from "@/bindings";
+import type { Account, Accounts, DeviceCode, DeviceStatus, GitHubLink } from "@/bindings";
 import { api, errorMessage } from "@/lib/api";
 
-/** The connected GitHub account, shared by every tab. */
+/** What the account dialog shows: the connected accounts, or the form that connects one. */
+export type AccountDialogView = "accounts" | "add";
+
+/** The connected GitHub accounts, shared by every tab. */
 export interface GitHubState {
+  /** In the order they were connected. */
+  accounts: Account[];
+  /**
+   * The active account: the one that works wherever a repository names no
+   * other. `null` when none is connected.
+   */
   account: Account | null;
-  /** True while the stored token is being checked at start-up. */
+  /** True while the keychain is being read at start-up. */
   loading: boolean;
   error: string | null;
   /** Whether this build can sign in through github.com rather than a pasted token. */
   deviceAvailable: boolean;
-  dialogOpen: boolean;
-  openDialog(): void;
+  /** `null` while the dialog is closed. */
+  dialog: AccountDialogView | null;
+  /** Without a view: the accounts, or the form when none is connected yet. */
+  openDialog(view?: AccountDialogView): void;
   closeDialog(): void;
+  /** Connects the account `token` belongs to, which becomes the active one. */
   signIn(token: string): Promise<boolean>;
-  signOut(): Promise<void>;
+  signOut(login: string): Promise<void>;
+  /** Makes `login` the active account. */
+  switchAccount(login: string): Promise<void>;
   startDevice(): Promise<DeviceCode>;
   pollDevice(deviceCode: string): Promise<DeviceStatus>;
   clearError(): void;
@@ -23,12 +37,14 @@ export interface GitHubState {
 
 const GitHubContext = createContext<GitHubState | null>(null);
 
+const NO_ACCOUNT: Accounts = { accounts: [], active: null };
+
 export function GitHubProvider({ children }: { children: ReactNode }) {
-  const [account, setAccount] = useState<Account | null>(null);
+  const [connected, setConnected] = useState<Accounts>(NO_ACCOUNT);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [deviceAvailable, setDeviceAvailable] = useState(false);
-  const [dialogOpen, setDialogOpen] = useState(false);
+  const [dialog, setDialog] = useState<AccountDialogView | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -38,10 +54,10 @@ export function GitHubProvider({ children }: { children: ReactNode }) {
       },
       () => {},
     );
-    api.githubAccount().then(
+    api.githubAccounts().then(
       (found) => {
         if (cancelled) return;
-        setAccount(found);
+        setConnected(found);
         setLoading(false);
       },
       (failure) => {
@@ -58,7 +74,8 @@ export function GitHubProvider({ children }: { children: ReactNode }) {
   const signIn = useCallback(async (token: string) => {
     setError(null);
     try {
-      setAccount(await api.githubSignIn(token));
+      await api.githubSignIn(token);
+      setConnected(await api.githubAccounts());
       return true;
     } catch (failure) {
       setError(errorMessage(failure));
@@ -66,38 +83,48 @@ export function GitHubProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const signOut = useCallback(async () => {
+  const signOut = useCallback(async (login: string) => {
     setError(null);
     try {
-      await api.githubSignOut();
+      setConnected(await api.githubSignOut(login));
     } catch (failure) {
       setError(errorMessage(failure));
     }
-    setAccount(null);
+  }, []);
+
+  const switchAccount = useCallback(async (login: string) => {
+    setError(null);
+    try {
+      setConnected(await api.githubSwitchAccount(login));
+    } catch (failure) {
+      setError(errorMessage(failure));
+    }
   }, []);
 
   const pollDevice = useCallback(async (deviceCode: string) => {
     const status = await api.githubDevicePoll(deviceCode);
-    if (status.kind === "signedIn") setAccount(status.value);
+    if (status.kind === "signedIn") setConnected(await api.githubAccounts());
     return status;
   }, []);
 
   const value = useMemo<GitHubState>(
     () => ({
-      account,
+      accounts: connected.accounts,
+      account: connected.accounts.find((account) => account.login === connected.active) ?? null,
       loading,
       error,
       deviceAvailable,
-      dialogOpen,
-      openDialog: () => setDialogOpen(true),
-      closeDialog: () => setDialogOpen(false),
+      dialog,
+      openDialog: (view) => setDialog(view ?? (connected.accounts.length > 0 ? "accounts" : "add")),
+      closeDialog: () => setDialog(null),
       signIn,
       signOut,
+      switchAccount,
       startDevice: api.githubDeviceStart,
       pollDevice,
       clearError: () => setError(null),
     }),
-    [account, loading, error, deviceAvailable, dialogOpen, signIn, signOut, pollDevice],
+    [connected, loading, error, deviceAvailable, dialog, signIn, signOut, switchAccount, pollDevice],
   );
 
   return <GitHubContext.Provider value={value}>{children}</GitHubContext.Provider>;
@@ -107,6 +134,58 @@ export function useGitHub(): GitHubState {
   const state = useContext(GitHubContext);
   if (!state) throw new Error("useGitHub needs a GitHubProvider above it");
   return state;
+}
+
+/** Where the repository of a tab lives on GitHub, and the account that works on it. */
+export interface RepositoryLink {
+  /** `undefined` until it is known, `null` when `origin` is not on GitHub. */
+  link: GitHubLink | null | undefined;
+  /** The account used for this repository; `null` when there is none to use. */
+  account: Account | null;
+  /** Gives the repository an account of its own; `null` lets it be chosen automatically again. */
+  setAccount(login: string | null): Promise<void>;
+}
+
+/**
+ * Follows which account works on the repository at `path`: the one it names,
+ * else its owner when that is a connected account, else the active one. The
+ * backend decides; this asks again whenever an answer may have changed.
+ */
+export function useRepositoryLink(path: string): RepositoryLink {
+  const { accounts, account: active } = useGitHub();
+  const [link, setLink] = useState<GitHubLink | null | undefined>(undefined);
+  const [changes, setChanges] = useState(0);
+  const connected = `${accounts.map((account) => account.login).join(" ")} > ${active?.login ?? ""}`;
+
+  useEffect(() => {
+    let cancelled = false;
+    api.githubRepository(path).then(
+      (found) => {
+        if (!cancelled) setLink(found);
+      },
+      () => {
+        if (!cancelled) setLink(null);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [path, connected, changes]);
+
+  const setAccount = useCallback(
+    async (login: string | null) => {
+      await api.githubSetRepositoryAccount(path, login);
+      setChanges((value) => value + 1);
+    },
+    [path],
+  );
+
+  const login = link?.account ?? null;
+  const account = useMemo(
+    () => accounts.find((candidate) => candidate.login === login) ?? null,
+    [accounts, login],
+  );
+  return { link, account, setAccount };
 }
 
 /** `issue-42-fix-the-thing` for issue 42 "Fix the thing!". */

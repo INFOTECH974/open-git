@@ -17,8 +17,9 @@ export const commands = {
 	/**
 	 *  Clones `url` into `destination` with the user's `git` and opens the clone.
 	 *  Progress is emitted with `destination` as the path; `cancel_operation` stops it.
+	 *  A clone from GitHub is made as the connected account `account`, and keeps it.
 	 */
-	cloneRepository: (url: string, destination: string) => typedError<RepoInfo, AppError>(__TAURI_INVOKE("clone_repository", { url, destination })),
+	cloneRepository: (url: string, destination: string, account: string | null) => typedError<RepoInfo, AppError>(__TAURI_INVOKE("clone_repository", { url, destination, account })),
 	/**  Stops the network operation running for `path`; `false` when there is none. */
 	cancelOperation: (path: string) => __TAURI_INVOKE<boolean>("cancel_operation", { path }),
 	closeRepository: (path: string) => __TAURI_INVOKE<void>("close_repository", { path }),
@@ -120,26 +121,49 @@ export const commands = {
 	pull: (path: string) => typedError<null, AppError>(__TAURI_INVOKE("pull", { path })),
 	/**  Pushes the current branch, setting its upstream on the first push. */
 	push: (path: string) => typedError<null, AppError>(__TAURI_INVOKE("push", { path })),
-	/**  The connected account, signing in with the stored token on first use. */
-	githubAccount: () => typedError<{
-	login: string,
-	avatarUrl: string,
-	htmlUrl: string,
-} | null, AppError>(__TAURI_INVOKE("github_account")),
-	/**  Signs in with a personal access token typed by the user. */
+	/**
+	 *  The connected accounts. The token a version that knew a single account left
+	 *  in the keychain becomes the first of them.
+	 */
+	githubAccounts: () => typedError<Accounts, AppError>(__TAURI_INVOKE("github_accounts")),
+	/**  Connects the account a personal access token typed by the user belongs to. */
 	githubSignIn: (token: string) => typedError<Account, AppError>(__TAURI_INVOKE("github_sign_in", { token })),
-	githubSignOut: () => typedError<null, AppError>(__TAURI_INVOKE("github_sign_out")),
+	/**  Forgets the account `login` and its token; resolves to the accounts left. */
+	githubSignOut: (login: string) => typedError<Accounts, AppError>(__TAURI_INVOKE("github_sign_out", { login })),
+	/**
+	 *  Makes `login` the active account: the one that works wherever a repository
+	 *  names no other.
+	 */
+	githubSwitchAccount: (login: string) => typedError<Accounts, AppError>(__TAURI_INVOKE("github_switch_account", { login })),
 	/**  Whether this build can sign in through github.com rather than a pasted token. */
 	githubDeviceAvailable: () => __TAURI_INVOKE<boolean>("github_device_available"),
 	githubDeviceStart: () => typedError<DeviceCode, AppError>(__TAURI_INVOKE("github_device_start")),
 	githubDevicePoll: (deviceCode: string) => typedError<DeviceStatus, AppError>(__TAURI_INVOKE("github_device_poll", { deviceCode })),
-	/**  The repositories the connected account can clone, most recently pushed first. */
-	githubRepositories: () => typedError<RemoteRepository[], AppError>(__TAURI_INVOKE("github_repositories")),
-	/**  The GitHub repository behind `origin`, or `None` when it is not on github.com. */
+	/**
+	 *  The repositories the account `login` (the active one when `None`) can clone,
+	 *  most recently pushed first.
+	 */
+	githubRepositories: (login: string | null) => typedError<RemoteRepository[], AppError>(__TAURI_INVOKE("github_repositories", { login })),
+	/**
+	 *  The GitHub repository behind `origin` and the account that works on it, or
+	 *  `None` when `origin` is not on github.com.
+	 */
 	githubRepository: (path: string) => typedError<{
-	owner: string,
-	name: string,
+	repo: GitHubRepo,
+	/**  Login of the account used for this repository; `None` when none is connected. */
+	account: string | null,
+	/**
+	 *  Login of the account the repository names, when it is a connected one.
+	 *  Without it the account is the owner of the repository when that is a
+	 *  connected account, and the active account otherwise.
+	 */
+	bound: string | null,
 } | null, AppError>(__TAURI_INVOKE("github_repository", { path })),
+	/**
+	 *  Makes the repository at `path` name `login` as the account that works on it;
+	 *  with `None` the account is chosen automatically again.
+	 */
+	githubSetRepositoryAccount: (path: string, login: string | null) => typedError<null, AppError>(__TAURI_INVOKE("github_set_repository_account", { path, login })),
 	githubPullRequests: (path: string, itemState: ItemState) => typedError<PullRequest[], AppError>(__TAURI_INVOKE("github_pull_requests", { path, itemState })),
 	githubCreatePullRequest: (path: string, title: string, body: string, head: string, base: string, draft: boolean) => typedError<PullRequest, AppError>(__TAURI_INVOKE("github_create_pull_request", { path, title, body, head, base, draft })),
 	githubIssues: (path: string, itemState: ItemState) => typedError<Issue[], AppError>(__TAURI_INVOKE("github_issues", { path, itemState })),
@@ -190,11 +214,21 @@ export const events = {
 };
 
 /* Types */
-/**  The signed-in user. */
+/**  A signed-in user. */
 export type Account = {
 	login: string,
 	avatarUrl: string,
 	htmlUrl: string,
+};
+
+/**  The connected accounts, in the order they were added. */
+export type Accounts = {
+	accounts: Account[],
+	/**
+	 *  Login of the account that works where nothing names another: one of
+	 *  `accounts`, as long as there is any.
+	 */
+	active: string | null,
 };
 
 /**  A model the user can pick. */
@@ -338,6 +372,19 @@ export type FileDiff = {
 export type FileStatus = "added" | "deleted" | "modified" | "renamed" | "copied" | "typeChanged" | 
 /**  Unresolved merge conflict (working tree only). */
 "conflicted";
+
+/**  Where a repository lives on GitHub, and the connected account that works on it. */
+export type GitHubLink = {
+	repo: GitHubRepo,
+	/**  Login of the account used for this repository; `None` when none is connected. */
+	account: string | null,
+	/**
+	 *  Login of the account the repository names, when it is a connected one.
+	 *  Without it the account is the owner of the repository when that is a
+	 *  connected account, and the active account otherwise.
+	 */
+	bound: string | null,
+};
 
 /**  A repository on github.com, as `owner/name`. */
 export type GitHubRepo = {

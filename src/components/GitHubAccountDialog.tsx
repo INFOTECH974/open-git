@@ -1,8 +1,10 @@
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { ExternalLink, KeyRound, LoaderCircle, LogOut } from "lucide-react";
+import { ExternalLink, KeyRound, LoaderCircle, LogOut, UserPlus } from "lucide-react";
 
 import type { DeviceCode } from "@/bindings";
+import { AccountAvatar } from "@/components/AccountAvatar";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -15,13 +17,16 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { errorMessage } from "@/lib/api";
-import { useGitHub } from "@/lib/github";
+import { type AccountDialogView, useGitHub } from "@/lib/github";
 import { useI18n } from "@/lib/i18n";
 
 const TOKEN_URL =
   "https://github.com/settings/tokens/new?scopes=repo,read:user&description=Open%20GIT";
 
-/** Sign in to GitHub with a token or through github.com, or sign out. */
+/**
+ * The connected GitHub accounts (which one is active, signing out), and the form
+ * that connects one more, with a token or through github.com.
+ */
 export function GitHubAccountDialog() {
   const { t } = useI18n();
   const github = useGitHub();
@@ -31,6 +36,13 @@ export function GitHubAccountDialog() {
   const [deviceError, setDeviceError] = useState<string | null>(null);
   const pollTimer = useRef<number | undefined>(undefined);
 
+  const open = github.dialog !== null;
+  // The view outlives the dialog, which still shows it while it fades out.
+  const [view, setView] = useState<AccountDialogView>("add");
+  if (github.dialog && github.dialog !== view) setView(github.dialog);
+  // Without any account there is nothing to list: the form is all there is.
+  const adding = view === "add" || github.accounts.length === 0;
+
   const stopPolling = () => {
     window.clearTimeout(pollTimer.current);
     pollTimer.current = undefined;
@@ -38,13 +50,13 @@ export function GitHubAccountDialog() {
 
   // Everything transient is dropped when the dialog closes.
   useEffect(() => {
-    if (github.dialogOpen) return;
+    if (open) return;
     stopPolling();
     setToken("");
     setDevice(null);
     setDeviceError(null);
     setBusy(false);
-  }, [github.dialogOpen]);
+  }, [open]);
 
   const submitToken = async (event: FormEvent) => {
     event.preventDefault();
@@ -90,42 +102,76 @@ export function GitHubAccountDialog() {
   };
 
   return (
-    <Dialog open={github.dialogOpen} onOpenChange={(open) => !open && github.closeDialog()}>
+    <Dialog open={open} onOpenChange={(next) => !next && github.closeDialog()}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>{t("GitHub account")}</DialogTitle>
+          <DialogTitle>{adding ? t("Connect a GitHub account") : t("GitHub accounts")}</DialogTitle>
           <DialogDescription>
-            {github.account
-              ? t("Workflow runs, pull requests and issues of your repositories are available in the left panel.")
-              : t("Connect an account to follow the workflow runs, and to list and create pull requests and issues.")}
+            {!adding
+              ? t("A repository uses the account it was cloned with or given, else its owner's when it is one of these, else the active account.")
+              : github.accounts.length > 0
+                ? t("The account you connect becomes the active one; the others stay connected.")
+                : t("Connect an account to follow the workflow runs, and to list and create pull requests and issues.")}
           </DialogDescription>
         </DialogHeader>
 
         {github.error && <p className="text-sm text-destructive">{github.error}</p>}
 
-        {github.account ? (
-          <div className="flex items-center gap-3">
-            <img
-              src={github.account.avatarUrl}
-              alt=""
-              className="size-10 rounded-full bg-muted"
-              referrerPolicy="no-referrer"
-            />
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium">{github.account.login}</p>
-              <button
-                type="button"
-                className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-                onClick={() => void openUrl(github.account!.htmlUrl)}
-              >
-                {t("Open the profile")} <ExternalLink className="size-3" />
-              </button>
-            </div>
-            <Button variant="outline" size="sm" onClick={() => void github.signOut()}>
-              <LogOut />
-              {t("Sign out")}
-            </Button>
-          </div>
+        {!adding ? (
+          <>
+            <ul className="divide-y rounded-md border">
+              {github.accounts.map((account) => {
+                const active = account.login === github.account?.login;
+                const signOutLabel = t("Sign out of {login}", { login: account.login });
+                return (
+                  <li key={account.login} className="flex items-center gap-3 px-3 py-2">
+                    <AccountAvatar account={account} className="size-9" />
+                    <div className="min-w-0 flex-1">
+                      <p className="flex items-center gap-1.5 text-sm font-medium">
+                        <span className="truncate">{account.login}</span>
+                        {active && <Badge variant="secondary">{t("Active")}</Badge>}
+                      </p>
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                        onClick={() => void openUrl(account.htmlUrl)}
+                      >
+                        {t("Open the profile")} <ExternalLink className="size-3" />
+                      </button>
+                    </div>
+                    {!active && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => void github.switchAccount(account.login)}
+                      >
+                        {t("Make active")}
+                      </Button>
+                    )}
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      className="text-muted-foreground"
+                      aria-label={signOutLabel}
+                      title={signOutLabel}
+                      onClick={() => void github.signOut(account.login)}
+                    >
+                      <LogOut />
+                    </Button>
+                  </li>
+                );
+              })}
+            </ul>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => github.openDialog("add")}>
+                <UserPlus />
+                {t("Connect another account")}
+              </Button>
+              <Button type="button" onClick={github.closeDialog}>
+                {t("Close")}
+              </Button>
+            </DialogFooter>
+          </>
         ) : device ? (
           <div className="space-y-3 text-sm">
             <p>{t("Enter this code on GitHub, then come back here. The page opened in your browser; if not, open it below.")}</p>
@@ -142,6 +188,11 @@ export function GitHubAccountDialog() {
                 {t("Waiting for GitHub…")}
               </span>
             </div>
+            {github.accounts.length > 0 && (
+              <p className="text-xs text-muted-foreground">
+                {t("GitHub connects the account your browser is signed in to: to add a different one, switch account on github.com first.")}
+              </p>
+            )}
           </div>
         ) : (
           <form onSubmit={submitToken} className="space-y-4">

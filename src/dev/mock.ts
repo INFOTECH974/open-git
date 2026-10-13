@@ -483,40 +483,95 @@ function checkoutRef(repo: MockRepo, name: string, kind: RefKind): void {
 
 // ---- GitHub, faked ---------------------------------------------------------------
 
-let githubSignedIn = false;
-const githubAccount: Account = {
-  login: "ada",
-  avatarUrl: "https://avatars.githubusercontent.com/u/583231?v=4",
-  htmlUrl: "https://github.com/ada",
-};
+/**
+ * The accounts that can be connected: each sign-in connects the next one, and
+ * signs in to the last one again once they all are.
+ */
+const GITHUB_ACCOUNTS: Account[] = [
+  {
+    login: "ada",
+    avatarUrl: "https://avatars.githubusercontent.com/u/583231?v=4",
+    htmlUrl: "https://github.com/ada",
+  },
+  {
+    login: "ada-at-work",
+    avatarUrl: "https://avatars.githubusercontent.com/u/9919?v=4",
+    htmlUrl: "https://github.com/ada-at-work",
+  },
+];
+/** The connected accounts, in the order they were, and the login of the active one. */
+const githubAccounts: Account[] = [];
+let githubActive: string | null = null;
+/** The account a repository was given (by a clone or by hand), by its path. */
+const repositoryAccounts = new Map<string, string>();
 let nextIssueNumber = 120;
 const now = Math.floor(Date.now() / 1000);
+
+type RepositoryRow = [fullName: string, description: string, isPrivate: boolean, fork: boolean, archived: boolean, hoursAgo: number];
+
+function remoteRepositories(rows: RepositoryRow[]): RemoteRepository[] {
+  return rows.map(([fullName, description, isPrivate, fork, archived, hoursAgo]) => ({
+    fullName,
+    description,
+    private: isPrivate,
+    fork,
+    archived,
+    cloneUrl: `https://github.com/${fullName}.git`,
+    pushedAt: now - hoursAgo * 3600,
+  }));
+}
+
 /**
- * What the account can clone: its own repositories, a collaboration, an
+ * What each account can clone: its own repositories, a collaboration, an
  * organisation's. Most recently pushed first, as GitHub sends them.
  */
-const remoteRepositories: RemoteRepository[] = [
-  ["ada/mock-repo", "A visual Git client", false, false, false, 2],
-  ["analytical-society/website", "Public site of the society", false, false, false, 5],
-  ["analytical-society/billing", "Invoices and subscriptions", true, false, false, 12],
-  ["ada/analytical-engine", "Notes on the engine, with the first program", true, false, false, 30],
-  ["analytical-society/infrastructure", "Servers, deployments and backups", true, false, false, 50],
-  ["babbage/difference-engine", "Tabulating polynomial functions", false, false, false, 90],
-  ["ada/dotfiles", "", true, false, false, 300],
-  ["analytical-society/design-system", "Shared components", true, false, false, 400],
-  ["analytical-society/mobile-app", "", true, false, false, 700],
-  ["analytical-society/handbook", "How we work", false, false, false, 1500],
-  ["ada/linux", "Linux kernel source tree", false, true, false, 2000],
-  ["babbage/punch-cards", "", true, false, true, 9000],
-].map(([fullName, description, isPrivate, fork, archived, hoursAgo]) => ({
-  fullName: String(fullName),
-  description: String(description),
-  private: Boolean(isPrivate),
-  fork: Boolean(fork),
-  archived: Boolean(archived),
-  cloneUrl: `https://github.com/${String(fullName)}.git`,
-  pushedAt: now - Number(hoursAgo) * 3600,
-}));
+const repositoriesOf: Record<string, RemoteRepository[]> = {
+  ada: remoteRepositories([
+    ["ada/mock-repo", "A visual Git client", false, false, false, 2],
+    ["analytical-society/website", "Public site of the society", false, false, false, 5],
+    ["analytical-society/billing", "Invoices and subscriptions", true, false, false, 12],
+    ["ada/analytical-engine", "Notes on the engine, with the first program", true, false, false, 30],
+    ["analytical-society/infrastructure", "Servers, deployments and backups", true, false, false, 50],
+    ["babbage/difference-engine", "Tabulating polynomial functions", false, false, false, 90],
+    ["ada/dotfiles", "", true, false, false, 300],
+    ["analytical-society/design-system", "Shared components", true, false, false, 400],
+    ["analytical-society/mobile-app", "", true, false, false, 700],
+    ["analytical-society/handbook", "How we work", false, false, false, 1500],
+    ["ada/linux", "Linux kernel source tree", false, true, false, 2000],
+    ["babbage/punch-cards", "", true, false, true, 9000],
+  ]),
+  "ada-at-work": remoteRepositories([
+    ["difference-ltd/mock-api", "The API the tabulators call", true, false, false, 1],
+    ["ada-at-work/mock-site", "Site of the company", false, false, false, 8],
+    ["difference-ltd/tabulator-firmware", "", true, false, false, 26],
+    ["difference-ltd/customer-portal", "Orders and support", true, false, false, 70],
+    ["ada-at-work/onboarding-notes", "", true, false, false, 900],
+  ]),
+};
+
+/** Who owns the GitHub repository behind each fictitious path. */
+function ownerOf(path: string): string {
+  if (path.includes("mock-api")) return "difference-ltd";
+  if (path.includes("mock-site")) return "ada-at-work";
+  return "ada";
+}
+
+function connectedAccount(login: string | null | undefined): Account | undefined {
+  return githubAccounts.find((account) => account.login === login);
+}
+
+/** The account that works on the repository at `path`, as the backend decides it. */
+function accountFor(path: string): Account | undefined {
+  return (
+    connectedAccount(repositoryAccounts.get(path)) ??
+    connectedAccount(ownerOf(path)) ??
+    connectedAccount(githubActive)
+  );
+}
+
+function accountsState(): { accounts: Account[]; active: string | null } {
+  return { accounts: [...githubAccounts], active: githubActive };
+}
 const pullRequests: PullRequest[] = [
   { number: 118, title: "Speed up lane assignment", body: "", state: "open", draft: false, merged: false, author: "grace", head: "feature/graph-14", base: "main", htmlUrl: "https://github.com/ada/mock-repo/pull/118", createdAt: now - 86400 * 2, updatedAt: now - 3600 * 5 },
   { number: 115, title: "Document the refs panel", body: "", state: "open", draft: true, merged: false, author: "linus", head: "feature/refs-21", base: "main", htmlUrl: "https://github.com/ada/mock-repo/pull/115", createdAt: now - 86400 * 4, updatedAt: now - 86400 },
@@ -532,8 +587,11 @@ function githubError(message: string): AppError {
   return { kind: "gitHub", message };
 }
 
-function requireSignedIn(): void {
-  if (!githubSignedIn) throw githubError("no GitHub account is connected");
+/** The account that works on the repository at `path`; fails when none is connected. */
+function requireAccount(path: string): Account {
+  const account = accountFor(path);
+  if (!account) throw githubError("no GitHub account is connected");
+  return account;
 }
 
 // ---- GitHub Actions, faked ---------------------------------------------------------
@@ -703,7 +761,7 @@ function runAt(run: RunPlan, at = Date.now() / 1000): WorkflowRun {
     branch: run.branch,
     commit: run.commit,
     state,
-    actor: githubAccount.login,
+    actor: "ada",
     htmlUrl: `https://github.com/ada/mock-repo/actions/runs/${run.id}`,
     startedAt: run.createdAt,
     updatedAt: Math.max(run.createdAt, ...moments.filter((moment) => moment !== null)),
@@ -854,7 +912,12 @@ function handle(command: string, args: Record<string, unknown>): unknown {
       return infoOf(repoAt(path.includes("mock") ? path : `${path}/mock-new`));
     case "clone_repository": {
       const destination = String(args.destination);
-      return withProgress(destination, "clone", 250).then(() => infoOf(repoAt(`${destination}-mock`)));
+      const account = connectedAccount(args.account as string | null);
+      return withProgress(destination, "clone", 250).then(() => {
+        // The clone keeps the account it was made with.
+        if (account) repositoryAccounts.set(`${destination}-mock`, account.login);
+        return infoOf(repoAt(`${destination}-mock`));
+      });
     }
     case "close_repository":
       repos.delete(path);
@@ -1155,32 +1218,58 @@ function handle(command: string, args: Record<string, unknown>): unknown {
       });
     }
     // GitHub
-    case "github_account":
-      return githubSignedIn ? githubAccount : null;
-    case "github_sign_in":
+    case "github_accounts":
+      return accountsState();
+    case "github_sign_in": {
       if (String(args.token).trim().length < 4) throw githubError("GitHub refused the request: Bad credentials");
-      githubSignedIn = true;
-      // Something to watch: the workflow of the last push starts as the account connects.
-      startRun("CI", "push", "main", resolve("origin/main"), ciJobs());
-      return githubAccount;
-    case "github_sign_out":
-      githubSignedIn = false;
-      return null;
+      const account =
+        GITHUB_ACCOUNTS.find((candidate) => !connectedAccount(candidate.login)) ??
+        GITHUB_ACCOUNTS[GITHUB_ACCOUNTS.length - 1];
+      // Something to watch: the workflow of the last push starts as the first account connects.
+      if (githubAccounts.length === 0) startRun("CI", "push", "main", resolve("origin/main"), ciJobs());
+      if (!connectedAccount(account.login)) githubAccounts.push(account);
+      githubActive = account.login;
+      return account;
+    }
+    case "github_sign_out": {
+      const index = githubAccounts.findIndex((account) => account.login === args.login);
+      if (index >= 0) githubAccounts.splice(index, 1);
+      if (!connectedAccount(githubActive)) githubActive = githubAccounts[0]?.login ?? null;
+      return accountsState();
+    }
+    case "github_switch_account":
+      if (!connectedAccount(String(args.login))) {
+        throw githubError(`\`${String(args.login)}\` is not a connected GitHub account`);
+      }
+      githubActive = String(args.login);
+      return accountsState();
     case "github_device_available":
       return false;
     case "github_device_start":
     case "github_device_poll":
       throw githubError("GitHub sign-in is not configured for this build (no OAuth client id)");
-    case "github_repositories":
-      if (!githubSignedIn) throw githubError("no GitHub account is connected");
-      return delayed(remoteRepositories, 500);
-    case "github_repository":
-      return { owner: "ada", name: path.split("/").pop() ?? "mock-repo" };
+    case "github_repositories": {
+      const account = connectedAccount((args.login as string | null) ?? githubActive);
+      if (!account) throw githubError("no GitHub account is connected");
+      return delayed(repositoriesOf[account.login] ?? [], 500);
+    }
+    case "github_repository": {
+      const bound = connectedAccount(repositoryAccounts.get(path))?.login ?? null;
+      return {
+        repo: { owner: ownerOf(path), name: path.split("/").pop() ?? "mock-repo" },
+        account: accountFor(path)?.login ?? null,
+        bound,
+      };
+    }
+    case "github_set_repository_account":
+      if (args.login == null) repositoryAccounts.delete(path);
+      else repositoryAccounts.set(path, String(args.login));
+      return null;
     case "github_pull_requests":
-      requireSignedIn();
+      requireAccount(path);
       return delayed(pullRequests.filter((pr) => pr.state === args.itemState), 300);
     case "github_create_pull_request": {
-      requireSignedIn();
+      const author = requireAccount(path).login;
       const created: PullRequest = {
         number: nextIssueNumber++,
         title: String(args.title),
@@ -1188,7 +1277,7 @@ function handle(command: string, args: Record<string, unknown>): unknown {
         state: "open",
         draft: Boolean(args.draft),
         merged: false,
-        author: githubAccount.login,
+        author,
         head: String(args.head),
         base: String(args.base),
         htmlUrl: `https://github.com/ada/mock-repo/pull/${nextIssueNumber - 1}`,
@@ -1199,16 +1288,16 @@ function handle(command: string, args: Record<string, unknown>): unknown {
       return created;
     }
     case "github_issues":
-      requireSignedIn();
+      requireAccount(path);
       return delayed(issues.filter((issue) => issue.state === args.itemState), 300);
     case "github_create_issue": {
-      requireSignedIn();
+      const author = requireAccount(path).login;
       const created: Issue = {
         number: nextIssueNumber++,
         title: String(args.title),
         body: String(args.body),
         state: "open",
-        author: githubAccount.login,
+        author,
         labels: [],
         comments: 0,
         htmlUrl: `https://github.com/ada/mock-repo/issues/${nextIssueNumber - 1}`,
@@ -1219,33 +1308,33 @@ function handle(command: string, args: Record<string, unknown>): unknown {
       return created;
     }
     case "github_issue_comments":
-      requireSignedIn();
+      requireAccount(path);
       return [];
     case "github_comment_issue": {
-      requireSignedIn();
+      const author = requireAccount(path).login;
       const issue = issues.find((candidate) => candidate.number === Number(args.number));
       if (!issue) throw githubError("GitHub refused the request: Not Found");
       issue.comments += 1;
       return {
         id: Date.now(),
-        author: githubAccount.login,
+        author,
         body: String(args.body),
         htmlUrl: `${issue.htmlUrl}#issuecomment-${Date.now()}`,
         createdAt: Math.floor(Date.now() / 1000),
       };
     }
     case "github_close_issue": {
-      requireSignedIn();
+      requireAccount(path);
       const issue = issues.find((candidate) => candidate.number === Number(args.number));
       if (!issue) throw githubError("GitHub refused the request: Not Found");
       issue.state = "closed";
       return issue;
     }
     case "github_workflow_runs":
-      requireSignedIn();
+      requireAccount(path);
       return delayed(runPlans.slice(0, 30).map((run) => runAt(run)), 200);
     case "github_workflow_jobs": {
-      requireSignedIn();
+      requireAccount(path);
       const run = runPlans.find((candidate) => candidate.id === Number(args.run));
       if (!run) throw githubError("GitHub refused the request: Not Found");
       return delayed(jobsAt(run), 200);

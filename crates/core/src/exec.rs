@@ -26,6 +26,34 @@ pub fn set_askpass(program: PathBuf) {
     let _ = ASKPASS.set(program);
 }
 
+/// Gives the `git` started with `env` one more configuration value, as
+/// `git -c key=value` would.
+///
+/// It goes through `GIT_CONFIG_COUNT`, which git reads since 2.31; an older one
+/// ignores it.
+pub fn add_config(env: &mut Vec<(OsString, OsString)>, key: &str, value: &str) {
+    const COUNT: &str = "GIT_CONFIG_COUNT";
+    let position = env.iter().position(|(name, _)| name == COUNT);
+    let count = match position {
+        Some(position) => env[position]
+            .1
+            .to_str()
+            .and_then(|count| count.parse().ok()),
+        // What the application itself was started with still applies.
+        None => std::env::var(COUNT)
+            .ok()
+            .and_then(|count| count.parse().ok()),
+    }
+    .unwrap_or(0usize);
+    env.push((format!("GIT_CONFIG_KEY_{count}").into(), key.into()));
+    env.push((format!("GIT_CONFIG_VALUE_{count}").into(), value.into()));
+    let total = (COUNT.into(), (count + 1).to_string().into());
+    match position {
+        Some(position) => env[position] = total,
+        None => env.push(total),
+    }
+}
+
 pub(crate) struct GitOutput {
     #[allow(dead_code)]
     pub stdout: String,
@@ -282,4 +310,24 @@ pub(crate) fn git_with_progress(
         stdout: stdout_text,
         stderr: stderr_text,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn added_configuration_reaches_git() {
+        let mut env = Vec::new();
+        add_config(&mut env, "open-git-test.first", "one");
+        add_config(&mut env, "open-git-test.second", "two words");
+
+        let read = |key: &str| {
+            let output = git(&std::env::temp_dir(), &env, &["config", "--get", key], None);
+            output.map(|output| output.stdout.trim().to_owned()).ok()
+        };
+        assert_eq!(read("open-git-test.first").as_deref(), Some("one"));
+        assert_eq!(read("open-git-test.second").as_deref(), Some("two words"));
+        assert_eq!(read("open-git-test.third"), None);
+    }
 }

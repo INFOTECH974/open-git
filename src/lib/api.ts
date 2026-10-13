@@ -36,8 +36,9 @@ export const api = {
   // repositories
   openRepository: (path: string) => unwrap(commands.openRepository(path)),
   initRepository: (path: string) => unwrap(commands.initRepository(path)),
-  cloneRepository: (url: string, destination: string) =>
-    unwrap(commands.cloneRepository(url, destination)),
+  /** `account` is the login of the GitHub account the clone is made with, and keeps. */
+  cloneRepository: (url: string, destination: string, account: string | null) =>
+    unwrap(commands.cloneRepository(url, destination, account)),
   /** Stops the network operation running for `path`; resolves to whether there was one. */
   cancelOperation: (path: string) => commands.cancelOperation(path),
   closeRepository: (path: string) => commands.closeRepository(path),
@@ -126,15 +127,21 @@ export const api = {
   push: (path: string) => unwrap(commands.push(path)),
 
   // GitHub
-  githubAccount: () => unwrap(commands.githubAccount()),
+  /** The connected accounts and the login of the active one. */
+  githubAccounts: () => unwrap(commands.githubAccounts()),
   githubSignIn: (token: string) => unwrap(commands.githubSignIn(token)),
-  githubSignOut: () => unwrap(commands.githubSignOut()),
+  githubSignOut: (login: string) => unwrap(commands.githubSignOut(login)),
+  githubSwitchAccount: (login: string) => unwrap(commands.githubSwitchAccount(login)),
   githubDeviceAvailable: () => commands.githubDeviceAvailable(),
   githubDeviceStart: () => unwrap(commands.githubDeviceStart()),
   githubDevicePoll: (deviceCode: string) => unwrap(commands.githubDevicePoll(deviceCode)),
-  /** What the connected account can clone, most recently pushed first. */
-  githubRepositories: () => unwrap(commands.githubRepositories()),
+  /** What the account `login` can clone, most recently pushed first. */
+  githubRepositories: (login: string) => unwrap(commands.githubRepositories(login)),
+  /** Where `origin` lives on GitHub and the account that works on it; `null` when it is elsewhere. */
   githubRepository: (path: string) => unwrap(commands.githubRepository(path)),
+  /** Gives the repository an account of its own; `null` lets it be chosen automatically again. */
+  githubSetRepositoryAccount: (path: string, login: string | null) =>
+    unwrap(commands.githubSetRepositoryAccount(path, login)),
   githubPullRequests: (path: string, itemState: ItemState) =>
     unwrap(commands.githubPullRequests(path, itemState)),
   githubCreatePullRequest: (
