@@ -10,7 +10,7 @@ use http::{HeaderMap, StatusCode};
 use octocrab::{FromResponse, Octocrab, etag::EntityTag, models, params};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-use crate::{GitHubRepo, Result};
+use crate::{Access, Error, GitHubRepo, Result};
 
 /// A signed-in user.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -183,6 +183,40 @@ impl GitHub {
     fn polled_answer<T: Clone + 'static>(&self, route: &str) -> Option<T> {
         let polled = self.polled.lock().unwrap_or_else(PoisonError::into_inner);
         polled.get(route)?.1.downcast_ref::<T>().cloned()
+    }
+
+    /// What this account may do with `repo`. GitHub answers a private repository
+    /// the account cannot see as if it did not exist.
+    pub async fn access(&self, repo: &GitHubRepo) -> Result<Access> {
+        /// Only what matters of a repository, which octocrab's model would
+        /// refuse whole for a field it does not expect.
+        #[derive(Deserialize)]
+        struct Reached {
+            permissions: Option<Permissions>,
+        }
+        #[derive(Deserialize)]
+        struct Permissions {
+            #[serde(default)]
+            push: bool,
+        }
+
+        let route = format!("/repos/{}/{}", repo.owner, repo.name);
+        match self.client.get::<Reached, _, ()>(route, None).await {
+            Ok(reached) => Ok(match reached.permissions {
+                Some(Permissions { push: true }) => Access::Write,
+                _ => Access::Read,
+            }),
+            Err(error) => {
+                let error = Error::from(error);
+                match error.status() {
+                    Some(StatusCode::UNAUTHORIZED) => Ok(Access::Refused),
+                    Some(StatusCode::NOT_FOUND) => Ok(Access::Hidden),
+                    // 403 is also how GitHub says the rate limit was reached:
+                    // nothing to conclude from it.
+                    _ => Err(error),
+                }
+            }
+        }
     }
 
     /// The user the token belongs to; fails when the token is invalid.

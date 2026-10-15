@@ -17,6 +17,7 @@ import {
   MessageSquare,
   Plus,
   RefreshCw,
+  TriangleAlert,
 } from "lucide-react";
 
 import type { Issue, ItemState, PullRequest, WorkflowRun } from "@/bindings";
@@ -39,7 +40,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { type WorkflowRunAction, WorkflowRunsSection } from "@/components/WorkflowRunsSection";
 import type { WorkflowRuns } from "@/hooks/useWorkflowRuns";
-import { api, errorMessage } from "@/lib/api";
+import { api, errorMessage, isTokenRefused } from "@/lib/api";
 import { relativeTime } from "@/lib/format";
 import { type RepositoryLink, useGitHub } from "@/lib/github";
 import { useI18n } from "@/lib/i18n";
@@ -92,7 +93,7 @@ export function ForgePanel({
 }: Props) {
   const { t } = useI18n();
   const github = useGitHub();
-  const { link, account } = forge;
+  const { link, account, refused } = forge;
 
   if (!link) return null;
 
@@ -132,6 +133,7 @@ export function ForgePanel({
             >
               <AccountAvatar account={account} className="size-4" />
               <span className="min-w-0 flex-1 truncate">{account.login}</span>
+              {refused && <TriangleAlert className="size-3 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden />}
               <ChevronsUpDown className="size-3 shrink-0" aria-hidden />
             </button>
           </DropdownMenuTrigger>
@@ -145,7 +147,7 @@ export function ForgePanel({
                 <span className="flex min-w-0 flex-col">
                   <span>{t("Automatic")}</span>
                   <span className="text-xs text-muted-foreground">
-                    {t("Its owner's account when connected, else the active one")}
+                    {t("An account that can push to it, the active one first")}
                   </span>
                 </span>
               </DropdownMenuRadioItem>
@@ -153,15 +155,85 @@ export function ForgePanel({
                 <DropdownMenuRadioItem key={candidate.login} value={candidate.login}>
                   <AccountAvatar account={candidate} className="size-5" />
                   <span className="truncate">{candidate.login}</span>
+                  {github.refused.includes(candidate.login) && (
+                    <span className="ml-auto text-xs text-amber-600 dark:text-amber-400">
+                      {t("Token refused")}
+                    </span>
+                  )}
                 </DropdownMenuRadioItem>
               ))}
             </DropdownMenuRadioGroup>
           </DropdownMenuContent>
         </DropdownMenu>
       )}
+      {refused ? (
+        <div className="mx-3 my-2 space-y-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-2 text-xs">
+          <p className="flex gap-1.5 font-medium">
+            <TriangleAlert className="mt-px size-3.5 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden />
+            {t("GitHub no longer accepts the token of {login}.", { login: account.login })}
+          </p>
+          <p className="text-muted-foreground">
+            {t("It was revoked or has expired. Connect this account again to see the workflow runs, pull requests and issues.")}
+          </p>
+          <Button
+            variant="outline"
+            size="xs"
+            className="max-w-full"
+            title={t("Connect {login} again", { login: account.login })}
+            onClick={() => github.openDialog("add", account.login)}
+          >
+            <CircleUser />
+            <span className="truncate">{t("Connect {login} again", { login: account.login })}</span>
+          </Button>
+        </div>
+      ) : (
+        <ForgeSections
+          repoPath={repoPath}
+          login={account.login}
+          active={active}
+          version={version}
+          busy={busy}
+          workflows={workflows}
+          workflowsRef={workflowsRef}
+          onCreatePullRequest={onCreatePullRequest}
+          onCreateIssue={onCreateIssue}
+          onPullRequestAction={onPullRequestAction}
+          onIssueAction={onIssueAction}
+          onWorkflowRunAction={onWorkflowRunAction}
+          onOpenUrl={onOpenUrl}
+        />
+      )}
+    </div>
+  );
+}
+
+type SectionsProps = Omit<Props, "forge" | "onChooseAccount"> & {
+  /** The account that works on the repository. */
+  login: string;
+};
+
+/** The workflow runs, pull requests and issues, as the account `login` sees them. */
+function ForgeSections({
+  repoPath,
+  login,
+  active,
+  version,
+  busy,
+  workflows,
+  workflowsRef,
+  onCreatePullRequest,
+  onCreateIssue,
+  onPullRequestAction,
+  onIssueAction,
+  onWorkflowRunAction,
+  onOpenUrl,
+}: SectionsProps) {
+  const { t } = useI18n();
+  return (
+    <>
       {/* Each section is keyed by the account: what another one may see is loaded afresh. */}
       <WorkflowRunsSection
-        key={`runs ${account.login}`}
+        key={`runs ${login}`}
         repoPath={repoPath}
         active={active}
         workflows={workflows}
@@ -170,7 +242,7 @@ export function ForgePanel({
         onOpenUrl={onOpenUrl}
       />
       <ForgeSection<PullRequest>
-        key={`pulls ${account.login}`}
+        key={`pulls ${login}`}
         title={t("Pull requests")}
         icon={GitPullRequest}
         load={(state) => api.githubPullRequests(repoPath, state)}
@@ -211,7 +283,7 @@ export function ForgePanel({
         )}
       />
       <ForgeSection<Issue>
-        key={`issues ${account.login}`}
+        key={`issues ${login}`}
         title={t("Issues")}
         icon={CircleDot}
         load={(state) => api.githubIssues(repoPath, state)}
@@ -260,7 +332,7 @@ export function ForgePanel({
           />
         )}
       />
-    </div>
+    </>
   );
 }
 
@@ -284,6 +356,7 @@ interface SectionProps<T> {
 
 function ForgeSection<T>({ title, icon: Icon, load, version, busy, createLabel, onCreate, render }: SectionProps<T>) {
   const { t } = useI18n();
+  const github = useGitHub();
   const [open, setOpen] = useState(true);
   const [state, setState] = useState<ItemState>("open");
   const [items, setItems] = useState<T[] | null>(null);
@@ -306,6 +379,8 @@ function ForgeSection<T>({ title, icon: Icon, load, version, busy, createLabel, 
         if (cancelled) return;
         setError(errorMessage(failure));
         setLoading(false);
+        // The panel then asks for the account to be connected again.
+        if (isTokenRefused(failure)) void github.reload();
       },
     );
     return () => {

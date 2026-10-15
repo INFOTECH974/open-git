@@ -5,6 +5,18 @@ import { api, errorMessage, events } from "@/lib/api";
 
 /** How often an open application looks for a newer release. */
 const CHECK_EVERY_MS = 4 * 60 * 60 * 1000;
+/** Coming back to the window looks again when the last look is older than this. */
+const CHECK_ON_FOCUS_AFTER_MS = 60 * 60 * 1000;
+/** The version whose banner was closed: it does not come back for that one. */
+const DISMISSED_KEY = "open-git.update.dismissed";
+
+function loadDismissed(): string | null {
+  try {
+    return localStorage.getItem(DISMISSED_KEY);
+  } catch {
+    return null;
+  }
+}
 
 /** Where the source code lives. */
 export const REPOSITORY_URL = "https://github.com/INFOTECH974/open-git";
@@ -24,6 +36,10 @@ export interface UpdateState {
   /** The download, from 0 to 100; `null` before it starts or when its size is unknown. */
   percent: number | null;
   error: string | null;
+  /** Whether the banner announcing `available` was closed. */
+  dismissed: boolean;
+  /** Closes the banner until a newer version comes out. */
+  dismiss(): void;
   /** Looks at the latest release and reports what it finds, failures included. */
   check(): Promise<void>;
   /** Downloads and installs the release; the application restarts when it succeeds. */
@@ -44,6 +60,8 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
   const [percent, setPercent] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [dismissedVersion, setDismissedVersion] = useState<string | null>(loadDismissed);
+  const lastLook = useRef(0);
 
   useEffect(() => {
     getVersion().then(setCurrentVersion, () => {
@@ -52,6 +70,7 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const look = useCallback(async (quiet: boolean) => {
+    lastLook.current = Date.now();
     if (!quiet) {
       setChecking(true);
       setError(null);
@@ -76,8 +95,26 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
       void look(true);
     }
     const timer = window.setInterval(() => void look(true), CHECK_EVERY_MS);
-    return () => window.clearInterval(timer);
+    // A window left open for days still hears of a release soon after coming back to it.
+    const onFocus = () => {
+      if (Date.now() - lastLook.current >= CHECK_ON_FOCUS_AFTER_MS) void look(true);
+    };
+    window.addEventListener("focus", onFocus);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", onFocus);
+    };
   }, [look]);
+
+  const dismiss = useCallback(() => {
+    if (!available) return;
+    setDismissedVersion(available);
+    try {
+      localStorage.setItem(DISMISSED_KEY, available);
+    } catch {
+      // Not remembered: the banner comes back at the next start.
+    }
+  }, [available]);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -122,6 +159,8 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
       installing,
       percent,
       error,
+      dismissed: available !== null && available === dismissedVersion,
+      dismiss,
       check: () => look(false),
       install,
       dialogOpen,
@@ -131,7 +170,20 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
         setError(null);
       },
     }),
-    [currentVersion, available, checking, upToDate, installing, percent, error, look, install, dialogOpen],
+    [
+      currentVersion,
+      available,
+      checking,
+      upToDate,
+      installing,
+      percent,
+      error,
+      dismissedVersion,
+      dismiss,
+      look,
+      install,
+      dialogOpen,
+    ],
   );
 
   return <UpdateContext.Provider value={value}>{children}</UpdateContext.Provider>;

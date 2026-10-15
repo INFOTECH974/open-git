@@ -18,23 +18,50 @@ interface Props {
   trailing?: ReactNode;
   /** Rendered at the far right, such as the theme switch. */
   end?: ReactNode;
+  /** The running version, shown next to the name; `null` until it is known. */
+  version: string | null;
+  /** The version of a newer release, when there is one. */
+  updateAvailable: string | null;
   /** The application name was clicked: its version and its updates. */
   onAbout(): void;
 }
 
 /** The application header: one tab per open repository. */
-export function TabBar({ tabs, activePath, onActivate, onClose, trailing, end, onAbout }: Props) {
+export function TabBar({
+  tabs,
+  activePath,
+  onActivate,
+  onClose,
+  trailing,
+  end,
+  version,
+  updateAvailable,
+  onAbout,
+}: Props) {
   const { t } = useI18n();
+  const about = updateAvailable
+    ? t("Open GIT {version} is available.", { version: updateAvailable })
+    : t("About Open GIT");
   return (
     <header className="flex h-10 shrink-0 items-center gap-2 border-b bg-muted/40 pr-2 pl-3 select-none">
       <button
         type="button"
-        title={t("About Open GIT")}
+        title={about}
+        aria-label={about}
         className="-ml-1.5 flex shrink-0 items-center gap-2 rounded-md px-1.5 py-1 text-sm font-semibold outline-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50"
         onClick={onAbout}
       >
-        <GitBranch className="size-4" aria-hidden />
+        <span className="relative">
+          <GitBranch className="size-4" aria-hidden />
+          {updateAvailable && (
+            <span
+              className="absolute -top-1 -right-1 size-2 rounded-full bg-emerald-500 ring-2 ring-background"
+              aria-hidden
+            />
+          )}
+        </span>
         Open GIT
+        {version && <span className="text-xs font-normal text-muted-foreground tabular-nums">{version}</span>}
       </button>
       <div role="tablist" className="app-scroll flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
         {tabs.map((tab) => {

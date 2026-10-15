@@ -14,6 +14,9 @@ pub enum AppError {
     System(String),
     /// GitHub, the keychain or the sign-in refused something.
     GitHub(String),
+    /// GitHub no longer accepts the token of an account, which the message names:
+    /// it has to be connected again.
+    TokenRefused(String),
     /// The model provider, or the keychain holding its key, refused something.
     Ai(String),
     /// The update of the application could not be found, checked or installed.

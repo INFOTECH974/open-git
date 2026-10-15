@@ -4,7 +4,7 @@ use std::{
 };
 
 use open_git_core::{CancelToken, Repo};
-use open_git_forge::{Accounts, GitHub, account_token, load_accounts};
+use open_git_forge::{Access, Accounts, GitHub, GitHubRepo, account_token, load_accounts};
 use tauri::AppHandle;
 
 use crate::{
@@ -25,6 +25,18 @@ struct GitHubState {
     /// By login. A client keeps the answers GitHub gave it (see `GitHub::poll`),
     /// which are those of its account.
     clients: HashMap<String, GitHub>,
+    /// What each account may do with each repository GitHub was asked about, by
+    /// login and `owner/name`, both in lower case.
+    access: HashMap<(String, String), Access>,
+    /// Whether the tokens were shown to GitHub since the start.
+    checked: bool,
+}
+
+fn access_key(login: &str, repo: &GitHubRepo) -> (String, String) {
+    (
+        login.to_ascii_lowercase(),
+        format!("{}/{}", repo.owner, repo.name).to_ascii_lowercase(),
+    )
 }
 
 /// The repositories the user has opened, keyed by the path `RepoInfo::path` reports.
@@ -117,17 +129,70 @@ impl AppState {
     }
 
     /// Takes note of what the keychain now lists. The clients of the accounts
-    /// that left are dropped, and `client` is kept for the account named with it.
-    pub fn set_github_accounts(&self, accounts: Accounts, client: Option<(String, GitHub)>) {
+    /// that left are dropped, and `client` is kept for the account named with it,
+    /// whose token is new: what GitHub said of the previous one no longer holds.
+    pub fn set_github_accounts(&self, mut accounts: Accounts, client: Option<(String, GitHub)>) {
         let mut github = lock(&self.github);
-        github
-            .clients
-            .retain(|login, _| accounts.find(login).is_some());
+        let renewed = client.as_ref().map(|(login, _)| login.to_ascii_lowercase());
+        let kept = |login: &str| {
+            accounts.find(login).is_some()
+                && renewed.as_deref() != Some(login.to_ascii_lowercase().as_str())
+        };
+        let refused = github
+            .accounts
+            .take()
+            .map(|previous| previous.refused)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|login| kept(login))
+            .collect();
+        github.clients.retain(|login, _| kept(login));
+        github.access.retain(|(login, _), _| kept(login));
         if let Some((login, client)) = client {
             github.clients.insert(login, client);
         }
+        accounts.refused = refused;
         github.accounts = Some(accounts);
         github.read = true;
+    }
+
+    /// Takes note that GitHub no longer accepts the token of `login`.
+    pub fn refuse_github_account(&self, login: &str) {
+        let mut github = lock(&self.github);
+        if let Some(accounts) = github.accounts.as_mut()
+            && let Some(account) = accounts.find(login)
+            && !accounts.is_refused(login)
+        {
+            let login = account.login.clone();
+            accounts.refused.push(login);
+        }
+    }
+
+    /// Whether the tokens still have to be shown to GitHub; true only once.
+    pub fn start_github_check(&self) -> bool {
+        !std::mem::replace(&mut lock(&self.github).checked, true)
+    }
+
+    /// What `login` may do with `repo`, when GitHub was asked.
+    pub fn github_access(&self, login: &str, repo: &GitHubRepo) -> Option<Access> {
+        let github = lock(&self.github);
+        if github
+            .accounts
+            .as_ref()
+            .is_some_and(|accounts| accounts.is_refused(login))
+        {
+            return Some(Access::Refused);
+        }
+        github.access.get(&access_key(login, repo)).copied()
+    }
+
+    pub fn set_github_access(&self, login: &str, repo: &GitHubRepo, access: Access) {
+        if access == Access::Refused {
+            self.refuse_github_account(login);
+        }
+        lock(&self.github)
+            .access
+            .insert(access_key(login, repo), access);
     }
 
     /// The API client of the connected account `login`, built from its token the

@@ -108,10 +108,14 @@ export function GitHubAccountDialog() {
           <DialogTitle>{adding ? t("Connect a GitHub account") : t("GitHub accounts")}</DialogTitle>
           <DialogDescription>
             {!adding
-              ? t("A repository uses the account it was cloned with or given, else its owner's when it is one of these, else the active account.")
-              : github.accounts.length > 0
-                ? t("The account you connect becomes the active one; the others stay connected.")
-                : t("Connect an account to follow the workflow runs, and to list and create pull requests and issues.")}
+              ? t("A repository uses the account it was cloned with or given, else one of these that can push to it, the active one first.")
+              : github.reconnecting
+                ? t("GitHub no longer accepts the token of {login}. Connect it again, signed in as {login} on github.com.", {
+                    login: github.reconnecting,
+                  })
+                : github.accounts.length > 0
+                  ? t("The account you connect becomes the active one; the others stay connected.")
+                  : t("Connect an account to follow the workflow runs, and to list and create pull requests and issues.")}
           </DialogDescription>
         </DialogHeader>
 
@@ -122,6 +126,7 @@ export function GitHubAccountDialog() {
             <ul className="divide-y rounded-md border">
               {github.accounts.map((account) => {
                 const active = account.login === github.account?.login;
+                const refused = github.refused.includes(account.login);
                 const signOutLabel = t("Sign out of {login}", { login: account.login });
                 return (
                   <li key={account.login} className="flex items-center gap-3 px-3 py-2">
@@ -130,6 +135,7 @@ export function GitHubAccountDialog() {
                       <p className="flex items-center gap-1.5 text-sm font-medium">
                         <span className="truncate">{account.login}</span>
                         {active && <Badge variant="secondary">{t("Active")}</Badge>}
+                        {refused && <Badge variant="destructive">{t("Token refused")}</Badge>}
                       </p>
                       <button
                         type="button"
@@ -139,14 +145,24 @@ export function GitHubAccountDialog() {
                         {t("Open the profile")} <ExternalLink className="size-3" />
                       </button>
                     </div>
-                    {!active && (
+                    {refused ? (
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => void github.switchAccount(account.login)}
+                        onClick={() => github.openDialog("add", account.login)}
                       >
-                        {t("Make active")}
+                        {t("Connect again")}
                       </Button>
+                    ) : (
+                      !active && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => void github.switchAccount(account.login)}
+                        >
+                          {t("Make active")}
+                        </Button>
+                      )
                     )}
                     <Button
                       variant="ghost"
@@ -190,7 +206,11 @@ export function GitHubAccountDialog() {
             </div>
             {github.accounts.length > 0 && (
               <p className="text-xs text-muted-foreground">
-                {t("GitHub connects the account your browser is signed in to: to add a different one, switch account on github.com first.")}
+                {github.reconnecting
+                  ? t("GitHub connects the account your browser is signed in to: check that it is {login}.", {
+                      login: github.reconnecting,
+                    })
+                  : t("GitHub connects the account your browser is signed in to: to add a different one, switch account on github.com first.")}
               </p>
             )}
           </div>

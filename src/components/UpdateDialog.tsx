@@ -1,5 +1,5 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { CircleCheck, Download, ExternalLink, LoaderCircle, RefreshCw } from "lucide-react";
+import { CircleArrowUp, CircleCheck, Download, ExternalLink, LoaderCircle, RefreshCw, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -122,5 +122,63 @@ export function UpdateDialog() {
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * Says, under the tabs, that a newer version is out, until it is installed or
+ * the banner is closed for that version.
+ */
+export function UpdateBanner() {
+  const { t } = useI18n();
+  const update = useUpdate();
+  const { available } = update;
+  if (!available || update.dismissed || update.installing) return null;
+  return (
+    <div
+      className="flex items-center gap-2 border-b border-emerald-600/30 bg-emerald-500/10 px-3 py-1.5 text-sm"
+      role="status"
+    >
+      <CircleArrowUp className="size-4 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden />
+      <p className="min-w-0 flex-1 truncate">
+        <span className="font-medium">{t("Open GIT {version} is available.", { version: available })}</span>{" "}
+        {update.currentVersion && (
+          <span className="text-muted-foreground">
+            {t("You have version {current}.", { current: update.currentVersion })}
+          </span>
+        )}
+      </p>
+      <Button
+        variant="ghost"
+        size="xs"
+        className="shrink-0 text-muted-foreground"
+        onClick={() => void openUrl(`${RELEASES_URL}/tag/v${available}`)}
+      >
+        <ExternalLink />
+        {t("What changed")}
+      </Button>
+      <Button
+        size="xs"
+        className="shrink-0 bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-600 dark:hover:bg-emerald-500"
+        onClick={() => {
+          // The dialog follows the download, which cannot be stopped half-way.
+          update.openDialog();
+          void update.install();
+        }}
+      >
+        <Download />
+        {t("Install and restart")}
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        className="shrink-0 text-muted-foreground"
+        aria-label={t("Not now")}
+        title={t("Not now")}
+        onClick={update.dismiss}
+      >
+        <X />
+      </Button>
+    </div>
   );
 }

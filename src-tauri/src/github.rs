@@ -46,15 +46,17 @@ pub struct GitHubLink {
     /// Login of the account used for this repository; `None` when none is connected.
     pub account: Option<String>,
     /// Login of the account the repository names, when it is a connected one.
-    /// Without it the account is the owner of the repository when that is a
-    /// connected account, and the active account otherwise.
+    /// Without it the account is one that GitHub lets push to the repository,
+    /// the active one first (see [`Accounts::for_repository`]).
     pub bound: Option<String>,
 }
 
 impl GitHubLink {
-    fn new(accounts: &Accounts, repo: GitHubRepo, named: Option<&str>) -> Self {
+    fn new(state: &AppState, accounts: &Accounts, repo: GitHubRepo, named: Option<&str>) -> Self {
         let bound = named.and_then(|login| accounts.find(login));
-        let account = accounts.for_repository(named, &repo.owner);
+        let account = accounts.for_repository(named, &repo.owner, |account| {
+            state.github_access(&account.login, &repo)
+        });
         Self {
             account: account.map(|account| account.login.clone()),
             bound: bound.map(|account| account.login.clone()),
@@ -94,23 +96,111 @@ fn link(state: &AppState, path: &str) -> Result<Option<GitHubLink>> {
         return Ok(None);
     };
     Ok(Some(GitHubLink::new(
+        state,
         &accounts(state)?,
         repo,
         named.as_deref(),
     )))
 }
 
-/// The GitHub repository behind `path`, and the client of the account that works
-/// on it.
-fn session(state: &AppState, path: &str) -> Result<(GitHub, GitHubRepo)> {
+/// The GitHub repository behind a tab, and the account that works on it.
+struct Session {
+    github: GitHub,
+    repo: GitHubRepo,
+    login: String,
+}
+
+impl Session {
+    /// What GitHub answered; a token it refuses flags its account.
+    fn answer<T>(&self, state: &AppState, answer: open_git_forge::Result<T>) -> Result<T> {
+        answer.map_err(|error| refused(state, &self.login, error))
+    }
+}
+
+/// The session of the repository at `path`.
+fn session(state: &AppState, path: &str) -> Result<Session> {
     let (url, named) = origin(state, path)?;
     let url =
         url.ok_or_else(|| AppError::GitHub("this repository has no `origin` remote".to_owned()))?;
     let repo = parse_github_url(&url)
         .ok_or_else(|| AppError::GitHub(open_git_forge::Error::NotGitHub { url }.to_string()))?;
-    let link = GitHubLink::new(&accounts(state)?, repo, named.as_deref());
+    let link = GitHubLink::new(state, &accounts(state)?, repo, named.as_deref());
     let login = link.account.ok_or(open_git_forge::Error::SignedOut)?;
-    Ok((state.github_client(&login)?, link.repo))
+    Ok(Session {
+        github: state.github_client(&login)?,
+        repo: link.repo,
+        login,
+    })
+}
+
+/// `error`, said plainly when it is GitHub turning down the token of `login`,
+/// which is then flagged: another account takes over where one can.
+fn refused(state: &AppState, login: &str, error: open_git_forge::Error) -> AppError {
+    if error.is_unauthorized() {
+        state.refuse_github_account(login);
+        return AppError::TokenRefused(format!(
+            "GitHub no longer accepts the token of {login}: connect this account again"
+        ));
+    }
+    error.into()
+}
+
+/// Asks GitHub what each connected account may do with `repo`, all at once,
+/// for those not asked yet. An account that could not be asked (no network)
+/// stays unknown, and is asked again next time.
+async fn probe(state: &AppState, accounts: &Accounts, repo: &GitHubRepo) {
+    // A single account has no rival to be chosen over.
+    if accounts.accounts.len() < 2 {
+        return;
+    }
+    let probes: Vec<_> = accounts
+        .accounts
+        .iter()
+        .filter(|account| state.github_access(&account.login, repo).is_none())
+        .filter_map(|account| {
+            let client = state.github_client(&account.login).ok()?;
+            let (login, repo) = (account.login.clone(), repo.clone());
+            Some(tauri::async_runtime::spawn(async move {
+                let access = client.access(&repo).await;
+                (login, access)
+            }))
+        })
+        .collect();
+    for probe in probes {
+        if let Ok((login, Ok(access))) = probe.await {
+            state.set_github_access(&login, repo, access);
+        }
+    }
+}
+
+/// Shows every token to GitHub once per run, so that the accounts it no longer
+/// accepts are flagged before anything fails for them.
+async fn check_tokens(state: &AppState) {
+    if !state.start_github_check() {
+        return;
+    }
+    let Ok(accounts) = accounts(state) else {
+        return;
+    };
+    let checks: Vec<_> = accounts
+        .accounts
+        .iter()
+        .filter_map(|account| {
+            let client = state.github_client(&account.login).ok()?;
+            let login = account.login.clone();
+            Some(tauri::async_runtime::spawn(async move {
+                let answer = client.account().await;
+                (login, answer)
+            }))
+        })
+        .collect();
+    for check in checks {
+        if let Ok((login, Err(error))) = check.await
+            && error.is_unauthorized()
+        {
+            state.refuse_github_account(&login);
+        }
+    }
 }
 
 // ---- git as an account -----------------------------------------------------------
@@ -162,17 +252,18 @@ pub fn bind(repo: &Repo, login: &str) -> open_git_core::Result<()> {
 
 // ---- accounts -------------------------------------------------------------------
 
-/// The connected accounts. The token a version that knew a single account left
-/// in the keychain becomes the first of them.
+/// The connected accounts, those whose token GitHub no longer accepts flagged.
+/// The token a version that knew a single account left in the keychain becomes
+/// the first of them.
 #[tauri::command]
 #[specta::specta]
 pub async fn github_accounts(state: State<'_, AppState>) -> Result<Accounts> {
-    if let Some(accounts) = state.github_accounts()? {
-        return Ok(accounts);
-    }
-    if let Some(token) = legacy_token()? {
+    if state.github_accounts()?.is_none()
+        && let Some(token) = legacy_token()?
+    {
         sign_in(&state, &token).await?;
     }
+    check_tokens(&state).await;
     accounts(&state)
 }
 
@@ -252,20 +343,39 @@ pub async fn github_repositories(
         }
         None => accounts.active().ok_or(open_git_forge::Error::SignedOut)?,
     };
-    Ok(state.github_client(&account.login)?.repositories().await?)
+    let repositories = state.github_client(&account.login)?.repositories().await;
+    repositories.map_err(|error| refused(&state, &account.login, error))
 }
 
 // ---- repository -----------------------------------------------------------------
 
 /// The GitHub repository behind `origin` and the account that works on it, or
-/// `None` when `origin` is not on github.com.
+/// `None` when `origin` is not on github.com. Unless the repository names its
+/// account, GitHub is first asked what each account may do with it.
 #[tauri::command]
 #[specta::specta]
 pub async fn github_repository(
     state: State<'_, AppState>,
     path: String,
 ) -> Result<Option<GitHubLink>> {
-    link(&state, &path)
+    let (url, named) = origin(&state, &path)?;
+    let Some(repo) = url.as_deref().and_then(parse_github_url) else {
+        return Ok(None);
+    };
+    let accounts = accounts(&state)?;
+    if named
+        .as_deref()
+        .and_then(|login| accounts.find(login))
+        .is_none()
+    {
+        probe(&state, &accounts, &repo).await;
+    }
+    Ok(Some(GitHubLink::new(
+        &state,
+        &accounts,
+        repo,
+        named.as_deref(),
+    )))
 }
 
 /// Makes the repository at `path` name `login` as the account that works on it;
@@ -299,8 +409,12 @@ pub async fn github_pull_requests(
     path: String,
     item_state: ItemState,
 ) -> Result<Vec<PullRequest>> {
-    let (github, repo) = session(&state, &path)?;
-    Ok(github.pull_requests(&repo, item_state).await?)
+    let session = session(&state, &path)?;
+    let answer = session
+        .github
+        .pull_requests(&session.repo, item_state)
+        .await;
+    session.answer(&state, answer)
 }
 
 #[tauri::command]
@@ -314,10 +428,12 @@ pub async fn github_create_pull_request(
     base: String,
     draft: bool,
 ) -> Result<PullRequest> {
-    let (github, repo) = session(&state, &path)?;
-    Ok(github
-        .create_pull_request(&repo, &title, &body, &head, &base, draft)
-        .await?)
+    let session = session(&state, &path)?;
+    let created = session
+        .github
+        .create_pull_request(&session.repo, &title, &body, &head, &base, draft)
+        .await;
+    session.answer(&state, created)
 }
 
 #[tauri::command]
@@ -327,8 +443,9 @@ pub async fn github_issues(
     path: String,
     item_state: ItemState,
 ) -> Result<Vec<Issue>> {
-    let (github, repo) = session(&state, &path)?;
-    Ok(github.issues(&repo, item_state).await?)
+    let session = session(&state, &path)?;
+    let answer = session.github.issues(&session.repo, item_state).await;
+    session.answer(&state, answer)
 }
 
 #[tauri::command]
@@ -339,8 +456,12 @@ pub async fn github_create_issue(
     title: String,
     body: String,
 ) -> Result<Issue> {
-    let (github, repo) = session(&state, &path)?;
-    Ok(github.create_issue(&repo, &title, &body).await?)
+    let session = session(&state, &path)?;
+    let answer = session
+        .github
+        .create_issue(&session.repo, &title, &body)
+        .await;
+    session.answer(&state, answer)
 }
 
 #[tauri::command]
@@ -350,8 +471,12 @@ pub async fn github_issue_comments(
     path: String,
     number: u32,
 ) -> Result<Vec<Comment>> {
-    let (github, repo) = session(&state, &path)?;
-    Ok(github.issue_comments(&repo, number as u64).await?)
+    let session = session(&state, &path)?;
+    let answer = session
+        .github
+        .issue_comments(&session.repo, number as u64)
+        .await;
+    session.answer(&state, answer)
 }
 
 #[tauri::command]
@@ -362,8 +487,12 @@ pub async fn github_comment_issue(
     number: u32,
     body: String,
 ) -> Result<Comment> {
-    let (github, repo) = session(&state, &path)?;
-    Ok(github.comment_issue(&repo, number as u64, &body).await?)
+    let session = session(&state, &path)?;
+    let answer = session
+        .github
+        .comment_issue(&session.repo, number as u64, &body)
+        .await;
+    session.answer(&state, answer)
 }
 
 #[tauri::command]
@@ -373,8 +502,12 @@ pub async fn github_close_issue(
     path: String,
     number: u32,
 ) -> Result<Issue> {
-    let (github, repo) = session(&state, &path)?;
-    Ok(github.close_issue(&repo, number as u64).await?)
+    let session = session(&state, &path)?;
+    let answer = session
+        .github
+        .close_issue(&session.repo, number as u64)
+        .await;
+    session.answer(&state, answer)
 }
 
 /// The latest runs of the repository's workflows, newest first. The UI calls
@@ -385,8 +518,9 @@ pub async fn github_workflow_runs(
     state: State<'_, AppState>,
     path: String,
 ) -> Result<Vec<WorkflowRun>> {
-    let (github, repo) = session(&state, &path)?;
-    Ok(github.workflow_runs(&repo).await?)
+    let session = session(&state, &path)?;
+    let answer = session.github.workflow_runs(&session.repo).await;
+    session.answer(&state, answer)
 }
 
 /// The jobs of a workflow run, each with its steps.
@@ -397,6 +531,7 @@ pub async fn github_workflow_jobs(
     path: String,
     run: u64,
 ) -> Result<Vec<WorkflowJob>> {
-    let (github, repo) = session(&state, &path)?;
-    Ok(github.workflow_jobs(&repo, run).await?)
+    let session = session(&state, &path)?;
+    let answer = session.github.workflow_jobs(&session.repo, run).await;
+    session.answer(&state, answer)
 }

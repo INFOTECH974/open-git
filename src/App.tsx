@@ -9,6 +9,7 @@ import {
   Moon,
   Sparkles,
   Sun,
+  TriangleAlert,
   UserPlus,
   Users,
   X,
@@ -37,7 +38,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { UpdateDialog } from "@/components/UpdateDialog";
+import { UpdateBanner, UpdateDialog } from "@/components/UpdateDialog";
 import { AiProvider, modelLabel, useAi } from "@/lib/ai";
 import { api, errorMessage, events, isCancelled } from "@/lib/api";
 import { type CloneJob, overallCloneProgress } from "@/lib/cloneProgress";
@@ -273,6 +274,8 @@ function Shell() {
         activePath={activePath}
         onActivate={setActivePath}
         onClose={closeTab}
+        version={update.currentVersion}
+        updateAvailable={update.available}
         onAbout={update.openDialog}
         trailing={
           <OpenMenu
@@ -315,6 +318,7 @@ function Shell() {
           </>
         }
       />
+      <UpdateBanner />
       {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
       {cloneJob && !cloneOpen && (
         <div className="flex items-center gap-2 border-b bg-muted/40 px-3 py-1.5 text-sm" role="status">
@@ -403,9 +407,8 @@ function UpdateButton() {
     <Tooltip>
       <TooltipTrigger asChild>
         <Button
-          variant="ghost"
           size="sm"
-          className="gap-1 px-1.5 text-emerald-600 dark:text-emerald-400"
+          className="gap-1 bg-emerald-600 px-2 text-white hover:bg-emerald-700 dark:bg-emerald-600 dark:hover:bg-emerald-500"
           aria-label={label}
           onClick={update.openDialog}
         >
@@ -446,14 +449,29 @@ function AccountButton() {
       </Tooltip>
     );
   }
-  const label = t("GitHub: {login}", { login: active.login });
+  const refused = github.accounts.filter((account) => github.refused.includes(account.login));
+  const label =
+    refused.length > 0
+      ? t("GitHub: {login} — an account must be connected again", { login: active.login })
+      : t("GitHub: {login}", { login: active.login });
   return (
     <DropdownMenu>
       <Tooltip>
         <TooltipTrigger asChild>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon-sm" className="text-muted-foreground" aria-label={label}>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="relative text-muted-foreground"
+              aria-label={label}
+            >
               <AccountAvatar account={active} className="size-5" />
+              {refused.length > 0 && (
+                <span
+                  className="absolute top-0.5 right-0.5 size-2 rounded-full bg-amber-500 ring-2 ring-background"
+                  aria-hidden
+                />
+              )}
             </Button>
           </DropdownMenuTrigger>
         </TooltipTrigger>
@@ -469,9 +487,25 @@ function AccountButton() {
             <DropdownMenuRadioItem key={account.login} value={account.login}>
               <AccountAvatar account={account} className="size-5" />
               <span className="truncate">{account.login}</span>
+              {refused.includes(account) && (
+                <span className="ml-auto text-xs text-amber-600 dark:text-amber-400">
+                  {t("Token refused")}
+                </span>
+              )}
             </DropdownMenuRadioItem>
           ))}
         </DropdownMenuRadioGroup>
+        {refused.length > 0 && (
+          <>
+            <DropdownMenuSeparator />
+            {refused.map((account) => (
+              <DropdownMenuItem key={account.login} onSelect={() => github.openDialog("add", account.login)}>
+                <TriangleAlert className="text-amber-600 dark:text-amber-400" />
+                <span className="truncate">{t("Connect {login} again", { login: account.login })}</span>
+              </DropdownMenuItem>
+            ))}
+          </>
+        )}
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={() => github.openDialog("add")}>
           <UserPlus />

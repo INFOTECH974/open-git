@@ -490,7 +490,13 @@ export function RepositoryView({ info, active }: Props) {
     [repo.refs],
   );
   const forge = useRepositoryLink(path);
-  const workflows = useWorkflowRuns(path, active, remoteTips, forge.account?.login ?? null);
+  // An account whose token GitHub refuses has nothing to show.
+  const workflows = useWorkflowRuns(
+    path,
+    active,
+    remoteTips,
+    forge.refused ? null : (forge.account?.login ?? null),
+  );
   const workflowsRef = useRef<HTMLElement>(null);
   const openOnGitHub = (url: string) => void openUrl(url).catch(report);
 

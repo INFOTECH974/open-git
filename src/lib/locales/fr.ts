@@ -290,8 +290,8 @@ export const fr: Record<string, string> = {
   "Only a local branch can be rebased.": "Seule une branche locale peut être rebasée.",
 
   // ---- GitHub --------------------------------------------------------------
-  "A repository uses the account it was cloned with or given, else its owner's when it is one of these, else the active account.":
-    "Un dépôt utilise le compte avec lequel il a été cloné ou qu'on lui a donné, sinon celui de son propriétaire s'il est dans cette liste, sinon le compte actif.",
+  "A repository uses the account it was cloned with or given, else one of these that can push to it, the active one first.":
+    "Un dépôt utilise le compte avec lequel il a été cloné ou qu'on lui a donné, sinon un de ces comptes qui peut y pousser, le compte actif en premier.",
   "The account you connect becomes the active one; the others stay connected.":
     "Le compte que vous connectez devient le compte actif ; les autres restent connectés.",
   "Connect an account to follow the workflow runs, and to list and create pull requests and issues.":
@@ -301,6 +301,17 @@ export const fr: Record<string, string> = {
   "Make active": "Rendre actif",
   "Sign out of {login}": "Déconnecter {login}",
   "Connect another account": "Connecter un autre compte",
+  "GitHub no longer accepts the token of {login}. Connect it again, signed in as {login} on github.com.":
+    "GitHub n'accepte plus le jeton de {login}. Reconnectez ce compte, en étant connecté en tant que {login} sur github.com.",
+  "GitHub connects the account your browser is signed in to: check that it is {login}.":
+    "GitHub connecte le compte avec lequel votre navigateur est connecté : vérifiez que c'est {login}.",
+  "Token refused": "Jeton refusé",
+  "Connect again": "Reconnecter",
+  "Connect {login} again": "Reconnecter {login}",
+  "GitHub: {login} — an account must be connected again": "GitHub : {login} — un compte est à reconnecter",
+  "GitHub no longer accepts the token of {login}.": "GitHub n'accepte plus le jeton de {login}.",
+  "It was revoked or has expired. Connect this account again to see the workflow runs, pull requests and issues.":
+    "Il a été révoqué ou a expiré. Reconnectez ce compte pour voir les exécutions des workflows, les pull requests et les issues.",
   "GitHub connects the account your browser is signed in to: to add a different one, switch account on github.com first.":
     "GitHub connecte le compte avec lequel votre navigateur est connecté : pour en ajouter un autre, changez d'abord de compte sur github.com.",
   "Enter this code on GitHub, then come back here. The page opened in your browser; if not, open it below.":
@@ -320,8 +331,8 @@ export const fr: Record<string, string> = {
   "GitHub account of this repository: {login}": "Compte GitHub de ce dépôt : {login}",
   "Account for this repository": "Compte pour ce dépôt",
   "Automatic": "Automatique",
-  "Its owner's account when connected, else the active one":
-    "Celui de son propriétaire s'il est connecté, sinon le compte actif",
+  "An account that can push to it, the active one first":
+    "Un compte qui peut y pousser, le compte actif en premier",
   "Pull requests": "Pull requests",
   "New pull request": "Nouvelle pull request",
   "Open on GitHub": "Ouvrir sur GitHub",
@@ -415,6 +426,10 @@ export const fr: Record<string, string> = {
   "Update": "Mettre à jour",
   "Update available": "Mise à jour disponible",
   "Open GIT {version} is available": "Open GIT {version} est disponible",
+  "Open GIT {version} is available.": "Open GIT {version} est disponible.",
+  "You have version {current}.": "Vous avez la version {current}.",
+  "What changed": "Nouveautés",
+  "Not now": "Pas maintenant",
   "Open GIT {version} can be installed; this is version {current}.":
     "Open GIT {version} peut être installé ; vous utilisez la version {current}.",
   "The update is downloaded from the GitHub release, checked against the signature of Open GIT, then the application restarts. Your open repositories come back.":

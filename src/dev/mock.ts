@@ -11,6 +11,7 @@ import { mockIPC } from "@tauri-apps/api/mocks";
 
 import type {
   Account,
+  Accounts,
   AiModel,
   AppError,
   CheckState,
@@ -485,7 +486,9 @@ function checkoutRef(repo: MockRepo, name: string, kind: RefKind): void {
 
 /**
  * The accounts that can be connected: each sign-in connects the next one, and
- * signs in to the last one again once they all are.
+ * signs in to the last one again once they all are. A sign-in reconnects first
+ * an account whose token was refused; a token containing "revoked" connects one
+ * whose token GitHub then refuses.
  */
 const GITHUB_ACCOUNTS: Account[] = [
   {
@@ -502,6 +505,8 @@ const GITHUB_ACCOUNTS: Account[] = [
 /** The connected accounts, in the order they were, and the login of the active one. */
 const githubAccounts: Account[] = [];
 let githubActive: string | null = null;
+/** The connected accounts whose token GitHub no longer accepts. */
+const refusedAccounts = new Set<string>();
 /** The account a repository was given (by a clone or by hand), by its path. */
 const repositoryAccounts = new Map<string, string>();
 let nextIssueNumber = 120;
@@ -560,17 +565,51 @@ function connectedAccount(login: string | null | undefined): Account | undefined
   return githubAccounts.find((account) => account.login === login);
 }
 
-/** The account that works on the repository at `path`, as the backend decides it. */
-function accountFor(path: string): Account | undefined {
-  return (
-    connectedAccount(repositoryAccounts.get(path)) ??
-    connectedAccount(ownerOf(path)) ??
-    connectedAccount(githubActive)
-  );
+type Access = "refused" | "hidden" | "read" | "write";
+const ACCESS_RANK: Record<Access, number> = { refused: 0, hidden: 0, read: 1, write: 2 };
+
+/**
+ * What `login` may do with the repository behind `path`: `ada-at-work` pushes to
+ * all three, `ada` to her own repository only, reads the company's public site
+ * and cannot see its private API.
+ */
+function accessOf(login: string, path: string): Access {
+  if (refusedAccounts.has(login)) return "refused";
+  if (login === "ada-at-work") return "write";
+  if (path.includes("mock-api")) return "hidden";
+  if (path.includes("mock-site")) return "read";
+  return "write";
 }
 
-function accountsState(): { accounts: Account[]; active: string | null } {
-  return { accounts: [...githubAccounts], active: githubActive };
+/**
+ * The account that works on the repository at `path`, as the backend decides it:
+ * the one it names, else one that can push rather than only read, the active
+ * one first, then the owner, then the others; else the owner, else the active one.
+ */
+function accountFor(path: string): Account | undefined {
+  const bound = connectedAccount(repositoryAccounts.get(path));
+  if (bound) return bound;
+  const active = connectedAccount(githubActive);
+  const owner = connectedAccount(ownerOf(path));
+  const candidates = [active, owner, ...githubAccounts].filter((account) => account !== undefined);
+  let best: Account | undefined;
+  let bestRank = 0;
+  for (const candidate of candidates) {
+    const rank = ACCESS_RANK[accessOf(candidate.login, path)];
+    if (rank > bestRank) {
+      best = candidate;
+      bestRank = rank;
+    }
+  }
+  return best ?? owner ?? active;
+}
+
+function accountsState(): Accounts {
+  return {
+    accounts: [...githubAccounts],
+    active: githubActive,
+    refused: githubAccounts.map((account) => account.login).filter((login) => refusedAccounts.has(login)),
+  };
 }
 const pullRequests: PullRequest[] = [
   { number: 118, title: "Speed up lane assignment", body: "", state: "open", draft: false, merged: false, author: "grace", head: "feature/graph-14", base: "main", htmlUrl: "https://github.com/ada/mock-repo/pull/118", createdAt: now - 86400 * 2, updatedAt: now - 3600 * 5 },
@@ -587,10 +626,20 @@ function githubError(message: string): AppError {
   return { kind: "gitHub", message };
 }
 
-/** The account that works on the repository at `path`; fails when none is connected. */
+/**
+ * The account that works on the repository at `path`; fails when none is
+ * connected, or when GitHub refuses its token.
+ */
 function requireAccount(path: string): Account {
   const account = accountFor(path);
   if (!account) throw githubError("no GitHub account is connected");
+  if (refusedAccounts.has(account.login)) {
+    const refused: AppError = {
+      kind: "tokenRefused",
+      message: `GitHub no longer accepts the token of ${account.login}: connect this account again`,
+    };
+    throw refused;
+  }
   return account;
 }
 
@@ -1221,19 +1270,23 @@ function handle(command: string, args: Record<string, unknown>): unknown {
     case "github_accounts":
       return accountsState();
     case "github_sign_in": {
-      if (String(args.token).trim().length < 4) throw githubError("GitHub refused the request: Bad credentials");
+      if (String(args.token).trim().length < 4) throw githubError("GitHub refused the request: Bad credentials (401 Unauthorized)");
       const account =
+        GITHUB_ACCOUNTS.find((candidate) => refusedAccounts.has(candidate.login)) ??
         GITHUB_ACCOUNTS.find((candidate) => !connectedAccount(candidate.login)) ??
         GITHUB_ACCOUNTS[GITHUB_ACCOUNTS.length - 1];
       // Something to watch: the workflow of the last push starts as the first account connects.
       if (githubAccounts.length === 0) startRun("CI", "push", "main", resolve("origin/main"), ciJobs());
       if (!connectedAccount(account.login)) githubAccounts.push(account);
+      if (String(args.token).includes("revoked")) refusedAccounts.add(account.login);
+      else refusedAccounts.delete(account.login);
       githubActive = account.login;
       return account;
     }
     case "github_sign_out": {
       const index = githubAccounts.findIndex((account) => account.login === args.login);
       if (index >= 0) githubAccounts.splice(index, 1);
+      refusedAccounts.delete(String(args.login));
       if (!connectedAccount(githubActive)) githubActive = githubAccounts[0]?.login ?? null;
       return accountsState();
     }
@@ -1251,6 +1304,13 @@ function handle(command: string, args: Record<string, unknown>): unknown {
     case "github_repositories": {
       const account = connectedAccount((args.login as string | null) ?? githubActive);
       if (!account) throw githubError("no GitHub account is connected");
+      if (refusedAccounts.has(account.login)) {
+        const refused: AppError = {
+          kind: "tokenRefused",
+          message: `GitHub no longer accepts the token of ${account.login}: connect this account again`,
+        };
+        throw refused;
+      }
       return delayed(repositoriesOf[account.login] ?? [], 500);
     }
     case "github_repository": {
@@ -1313,7 +1373,7 @@ function handle(command: string, args: Record<string, unknown>): unknown {
     case "github_comment_issue": {
       const author = requireAccount(path).login;
       const issue = issues.find((candidate) => candidate.number === Number(args.number));
-      if (!issue) throw githubError("GitHub refused the request: Not Found");
+      if (!issue) throw githubError("GitHub refused the request: Not Found (404 Not Found)");
       issue.comments += 1;
       return {
         id: Date.now(),
@@ -1326,7 +1386,7 @@ function handle(command: string, args: Record<string, unknown>): unknown {
     case "github_close_issue": {
       requireAccount(path);
       const issue = issues.find((candidate) => candidate.number === Number(args.number));
-      if (!issue) throw githubError("GitHub refused the request: Not Found");
+      if (!issue) throw githubError("GitHub refused the request: Not Found (404 Not Found)");
       issue.state = "closed";
       return issue;
     }
@@ -1336,7 +1396,7 @@ function handle(command: string, args: Record<string, unknown>): unknown {
     case "github_workflow_jobs": {
       requireAccount(path);
       const run = runPlans.find((candidate) => candidate.id === Number(args.run));
-      if (!run) throw githubError("GitHub refused the request: Not Found");
+      if (!run) throw githubError("GitHub refused the request: Not Found (404 Not Found)");
       return delayed(jobsAt(run), 200);
     }
     // commit message assistant

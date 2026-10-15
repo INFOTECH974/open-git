@@ -195,6 +195,11 @@ export function isCancelled(error: unknown): boolean {
   return error instanceof CommandError && error.error.kind === "cancelled";
 }
 
+/** Whether GitHub no longer accepts the token of the account that was used. */
+export function isTokenRefused(error: unknown): boolean {
+  return error instanceof CommandError && error.error.kind === "tokenRefused";
+}
+
 export function isRepositoryNotOpen(error: unknown): boolean {
   return error instanceof CommandError && error.error.kind === "repositoryNotOpen";
 }

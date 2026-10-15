@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { WorkflowRun } from "@/bindings";
-import { api, errorMessage } from "@/lib/api";
+import { api, errorMessage, isTokenRefused } from "@/lib/api";
 import { type CommitChecks, checksByCommit, isRunning } from "@/lib/checks";
+import { useGitHub } from "@/lib/github";
 
 /** While a run is queued or in progress, GitHub is asked again this often. */
 export const LIVE_POLL_MS = 5_000;
@@ -44,6 +45,7 @@ export function useWorkflowRuns(
   const [error, setError] = useState<string | null>(null);
   const [reloads, setReloads] = useState(0);
   const expectingUntil = useRef(0);
+  const { reload: reloadAccounts } = useGitHub();
 
   // What one account was shown is not what another may see.
   useEffect(() => {
@@ -94,6 +96,8 @@ export function useWorkflowRuns(
       } catch (failure) {
         if (stopped) return;
         setError(errorMessage(failure));
+        // The account gets flagged, and the panel asks for it to be connected again.
+        if (isTokenRefused(failure)) void reloadAccounts();
       } finally {
         asking = false;
       }
@@ -116,7 +120,7 @@ export function useWorkflowRuns(
       document.removeEventListener("visibilitychange", onVisible);
       setLoading(false);
     };
-  }, [enabled, path, account, reloads]);
+  }, [enabled, path, account, reloads, reloadAccounts]);
 
   const byCommit = useMemo(() => checksByCommit(runs ?? []), [runs]);
 

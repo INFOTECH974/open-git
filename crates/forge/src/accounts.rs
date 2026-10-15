@@ -29,6 +29,22 @@ pub struct Accounts {
     /// Login of the account that works where nothing names another: one of
     /// `accounts`, as long as there is any.
     pub active: Option<String>,
+    /// Logins of the accounts whose token GitHub no longer accepts: revoked,
+    /// expired, or the authorisation of the application withdrawn. Never stored:
+    /// the application fills it in as GitHub answers.
+    pub refused: Vec<String>,
+}
+
+/// What an account may do with a repository, as GitHub answered it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Access {
+    /// GitHub no longer accepts the token of the account.
+    Refused,
+    /// GitHub does not show the account the repository: private, and not
+    /// shared with it.
+    Hidden,
+    Read,
+    Write,
 }
 
 impl Accounts {
@@ -44,13 +60,38 @@ impl Accounts {
     }
 
     /// The account that works on a repository of `owner`: the one the repository
-    /// was given (`bound`), else its owner when that is a connected account, else
-    /// the active one.
-    pub fn for_repository(&self, bound: Option<&str>, owner: &str) -> Option<&Account> {
-        bound
-            .and_then(|login| self.find(login))
-            .or_else(|| self.find(owner))
-            .or_else(|| self.active())
+    /// names (`bound`), when it is connected. Otherwise, among the accounts that
+    /// `access` knows to reach the repository, one that may push rather than only
+    /// read, and between equals the active one, then the owner, then the others
+    /// in order. When none is known to reach it (nothing was asked yet, say), its
+    /// owner when that is a connected account, else the active one.
+    pub fn for_repository(
+        &self,
+        bound: Option<&str>,
+        owner: &str,
+        access: impl Fn(&Account) -> Option<Access>,
+    ) -> Option<&Account> {
+        if let Some(account) = bound.and_then(|login| self.find(login)) {
+            return Some(account);
+        }
+        let active = self.active();
+        let owner = self.find(owner);
+        let mut best: Option<(Access, &Account)> = None;
+        for account in active.into_iter().chain(owner).chain(&self.accounts) {
+            if let Some(found) = access(account).filter(|found| *found >= Access::Read)
+                && best.is_none_or(|(known, _)| found > known)
+            {
+                best = Some((found, account));
+            }
+        }
+        best.map(|(_, account)| account).or(owner).or(active)
+    }
+
+    /// Whether GitHub no longer accepts the token of the account `login`.
+    pub fn is_refused(&self, login: &str) -> bool {
+        self.refused
+            .iter()
+            .any(|refused| refused.eq_ignore_ascii_case(login))
     }
 
     /// Adds `account`, or replaces the one of the same login, and makes it active.
@@ -194,6 +235,7 @@ impl<V: Vault> Store<'_, V> {
         Ok(self.read()?.map(|(stored, active)| Accounts {
             accounts: stored.into_iter().map(|stored| stored.account).collect(),
             active,
+            refused: Vec::new(),
         }))
     }
 
@@ -493,10 +535,12 @@ mod tests {
         let accounts = Accounts {
             accounts: vec![account("ada"), account("grace"), account("linus")],
             active: Some("linus".to_owned()),
+            ..Accounts::default()
         };
+        // Nothing is known yet of what each account can reach.
         let chosen = |bound: Option<&str>, owner: &str| {
             accounts
-                .for_repository(bound, owner)
+                .for_repository(bound, owner, |_| None)
                 .map(|account| account.login.as_str())
         };
         assert_eq!(chosen(Some("Ada"), "grace"), Some("ada"));
@@ -509,6 +553,81 @@ mod tests {
             Some("linus")
         );
 
-        assert_eq!(Accounts::default().for_repository(Some("ada"), "ada"), None);
+        assert_eq!(
+            Accounts::default().for_repository(Some("ada"), "ada", |_| None),
+            None
+        );
+    }
+
+    #[test]
+    fn a_repository_uses_an_account_that_reaches_it_the_active_one_first() {
+        let mut accounts = Accounts {
+            accounts: vec![account("ada"), account("grace"), account("linus")],
+            active: Some("linus".to_owned()),
+            ..Accounts::default()
+        };
+        let chosen = |accounts: &Accounts, bound: Option<&str>, reach: &[(&str, Access)]| {
+            accounts
+                .for_repository(bound, "grace", |account| {
+                    reach
+                        .iter()
+                        .find(|(login, _)| *login == account.login)
+                        .map(|(_, access)| *access)
+                })
+                .map(|account| account.login.clone())
+        };
+        let all = |access| [("ada", access), ("grace", access), ("linus", access)];
+
+        // Between equals, the active account, then the owner, then the others.
+        assert_eq!(
+            chosen(&accounts, None, &all(Access::Write)).as_deref(),
+            Some("linus")
+        );
+        accounts.active = Some("ada".to_owned());
+        assert_eq!(
+            chosen(&accounts, None, &all(Access::Write)).as_deref(),
+            Some("ada")
+        );
+        assert_eq!(
+            chosen(&accounts, None, &all(Access::Read)).as_deref(),
+            Some("ada")
+        );
+        let only_owner_and_linus = [
+            ("ada", Access::Hidden),
+            ("grace", Access::Write),
+            ("linus", Access::Write),
+        ];
+        assert_eq!(
+            chosen(&accounts, None, &only_owner_and_linus).as_deref(),
+            Some("grace")
+        );
+
+        // Pushing beats reading, and an account that cannot reach it never wins.
+        let reach = [
+            ("ada", Access::Read),
+            ("grace", Access::Refused),
+            ("linus", Access::Write),
+        ];
+        assert_eq!(chosen(&accounts, None, &reach).as_deref(), Some("linus"));
+        let reach = [
+            ("ada", Access::Hidden),
+            ("grace", Access::Refused),
+            ("linus", Access::Read),
+        ];
+        assert_eq!(chosen(&accounts, None, &reach).as_deref(), Some("linus"));
+
+        // None reaches it: the owner, as when nothing is known.
+        let reach = [
+            ("ada", Access::Hidden),
+            ("grace", Access::Refused),
+            ("linus", Access::Hidden),
+        ];
+        assert_eq!(chosen(&accounts, None, &reach).as_deref(), Some("grace"));
+
+        // The account the repository names wins, whatever it can do.
+        assert_eq!(
+            chosen(&accounts, Some("grace"), &reach).as_deref(),
+            Some("grace")
+        );
     }
 }

@@ -15,6 +15,8 @@ export interface GitHubState {
    * other. `null` when none is connected.
    */
   account: Account | null;
+  /** Logins of the accounts whose token GitHub no longer accepts: to connect again. */
+  refused: string[];
   /** True while the keychain is being read at start-up. */
   loading: boolean;
   error: string | null;
@@ -22,14 +24,21 @@ export interface GitHubState {
   deviceAvailable: boolean;
   /** `null` while the dialog is closed. */
   dialog: AccountDialogView | null;
-  /** Without a view: the accounts, or the form when none is connected yet. */
-  openDialog(view?: AccountDialogView): void;
+  /** The account the form connects again, when GitHub turned its token down. */
+  reconnecting: string | null;
+  /**
+   * Without a view: the accounts, or the form when none is connected yet. With
+   * `reconnect`, the form says which account to connect again.
+   */
+  openDialog(view?: AccountDialogView, reconnect?: string): void;
   closeDialog(): void;
   /** Connects the account `token` belongs to, which becomes the active one. */
   signIn(token: string): Promise<boolean>;
   signOut(login: string): Promise<void>;
   /** Makes `login` the active account. */
   switchAccount(login: string): Promise<void>;
+  /** Asks the backend again, after GitHub turned down a token. */
+  reload(): Promise<void>;
   startDevice(): Promise<DeviceCode>;
   pollDevice(deviceCode: string): Promise<DeviceStatus>;
   clearError(): void;
@@ -37,7 +46,7 @@ export interface GitHubState {
 
 const GitHubContext = createContext<GitHubState | null>(null);
 
-const NO_ACCOUNT: Accounts = { accounts: [], active: null };
+const NO_ACCOUNT: Accounts = { accounts: [], active: null, refused: [] };
 
 export function GitHubProvider({ children }: { children: ReactNode }) {
   const [connected, setConnected] = useState<Accounts>(NO_ACCOUNT);
@@ -45,6 +54,7 @@ export function GitHubProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const [deviceAvailable, setDeviceAvailable] = useState(false);
   const [dialog, setDialog] = useState<AccountDialogView | null>(null);
+  const [reconnecting, setReconnecting] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -101,6 +111,14 @@ export function GitHubProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const reload = useCallback(async () => {
+    try {
+      setConnected(await api.githubAccounts());
+    } catch {
+      // What is shown stays as it was.
+    }
+  }, []);
+
   const pollDevice = useCallback(async (deviceCode: string) => {
     const status = await api.githubDevicePoll(deviceCode);
     if (status.kind === "signedIn") setConnected(await api.githubAccounts());
@@ -111,20 +129,38 @@ export function GitHubProvider({ children }: { children: ReactNode }) {
     () => ({
       accounts: connected.accounts,
       account: connected.accounts.find((account) => account.login === connected.active) ?? null,
+      refused: connected.refused,
       loading,
       error,
       deviceAvailable,
       dialog,
-      openDialog: (view) => setDialog(view ?? (connected.accounts.length > 0 ? "accounts" : "add")),
+      reconnecting,
+      openDialog: (view, reconnect) => {
+        setReconnecting(reconnect ?? null);
+        setDialog(view ?? (connected.accounts.length > 0 ? "accounts" : "add"));
+      },
       closeDialog: () => setDialog(null),
       signIn,
       signOut,
       switchAccount,
+      reload,
       startDevice: api.githubDeviceStart,
       pollDevice,
       clearError: () => setError(null),
     }),
-    [connected, loading, error, deviceAvailable, dialog, signIn, signOut, switchAccount, pollDevice],
+    [
+      connected,
+      loading,
+      error,
+      deviceAvailable,
+      dialog,
+      reconnecting,
+      signIn,
+      signOut,
+      switchAccount,
+      reload,
+      pollDevice,
+    ],
   );
 
   return <GitHubContext.Provider value={value}>{children}</GitHubContext.Provider>;
@@ -142,20 +178,22 @@ export interface RepositoryLink {
   link: GitHubLink | null | undefined;
   /** The account used for this repository; `null` when there is none to use. */
   account: Account | null;
+  /** Whether GitHub no longer accepts the token of that account. */
+  refused: boolean;
   /** Gives the repository an account of its own; `null` lets it be chosen automatically again. */
   setAccount(login: string | null): Promise<void>;
 }
 
 /**
  * Follows which account works on the repository at `path`: the one it names,
- * else its owner when that is a connected account, else the active one. The
- * backend decides; this asks again whenever an answer may have changed.
+ * else one that GitHub lets push to it, the active one first. The backend
+ * decides; this asks again whenever an answer may have changed.
  */
 export function useRepositoryLink(path: string): RepositoryLink {
-  const { accounts, account: active } = useGitHub();
+  const { accounts, account: active, refused } = useGitHub();
   const [link, setLink] = useState<GitHubLink | null | undefined>(undefined);
   const [changes, setChanges] = useState(0);
-  const connected = `${accounts.map((account) => account.login).join(" ")} > ${active?.login ?? ""}`;
+  const connected = `${accounts.map((account) => account.login).join(" ")} > ${active?.login ?? ""} ! ${refused.join(" ")}`;
 
   useEffect(() => {
     let cancelled = false;
@@ -185,7 +223,7 @@ export function useRepositoryLink(path: string): RepositoryLink {
     () => accounts.find((candidate) => candidate.login === login) ?? null,
     [accounts, login],
   );
-  return { link, account, setAccount };
+  return { link, account, refused: account !== null && refused.includes(account.login), setAccount };
 }
 
 /** `issue-42-fix-the-thing` for issue 42 "Fix the thing!". */

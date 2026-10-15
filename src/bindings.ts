@@ -122,8 +122,9 @@ export const commands = {
 	/**  Pushes the current branch, setting its upstream on the first push. */
 	push: (path: string) => typedError<null, AppError>(__TAURI_INVOKE("push", { path })),
 	/**
-	 *  The connected accounts. The token a version that knew a single account left
-	 *  in the keychain becomes the first of them.
+	 *  The connected accounts, those whose token GitHub no longer accepts flagged.
+	 *  The token a version that knew a single account left in the keychain becomes
+	 *  the first of them.
 	 */
 	githubAccounts: () => typedError<Accounts, AppError>(__TAURI_INVOKE("github_accounts")),
 	/**  Connects the account a personal access token typed by the user belongs to. */
@@ -146,7 +147,8 @@ export const commands = {
 	githubRepositories: (login: string | null) => typedError<RemoteRepository[], AppError>(__TAURI_INVOKE("github_repositories", { login })),
 	/**
 	 *  The GitHub repository behind `origin` and the account that works on it, or
-	 *  `None` when `origin` is not on github.com.
+	 *  `None` when `origin` is not on github.com. Unless the repository names its
+	 *  account, GitHub is first asked what each account may do with it.
 	 */
 	githubRepository: (path: string) => typedError<{
 	repo: GitHubRepo,
@@ -154,8 +156,8 @@ export const commands = {
 	account: string | null,
 	/**
 	 *  Login of the account the repository names, when it is a connected one.
-	 *  Without it the account is the owner of the repository when that is a
-	 *  connected account, and the active account otherwise.
+	 *  Without it the account is one that GitHub lets push to the repository,
+	 *  the active one first (see [`Accounts::for_repository`]).
 	 */
 	bound: string | null,
 } | null, AppError>(__TAURI_INVOKE("github_repository", { path })),
@@ -229,6 +231,12 @@ export type Accounts = {
 	 *  `accounts`, as long as there is any.
 	 */
 	active: string | null,
+	/**
+	 *  Logins of the accounts whose token GitHub no longer accepts: revoked,
+	 *  expired, or the authorisation of the application withdrawn. Never stored:
+	 *  the application fills it in as GitHub answers.
+	 */
+	refused: string[],
 };
 
 /**  A model the user can pick. */
@@ -251,6 +259,11 @@ export type AppError =
 { kind: "system"; message: string } | 
 /**  GitHub, the keychain or the sign-in refused something. */
 { kind: "gitHub"; message: string } | 
+/**
+ *  GitHub no longer accepts the token of an account, which the message names:
+ *  it has to be connected again.
+ */
+{ kind: "tokenRefused"; message: string } | 
 /**  The model provider, or the keychain holding its key, refused something. */
 { kind: "ai"; message: string } | 
 /**  The update of the application could not be found, checked or installed. */
@@ -380,8 +393,8 @@ export type GitHubLink = {
 	account: string | null,
 	/**
 	 *  Login of the account the repository names, when it is a connected one.
-	 *  Without it the account is the owner of the repository when that is a
-	 *  connected account, and the active account otherwise.
+	 *  Without it the account is one that GitHub lets push to the repository,
+	 *  the active one first (see [`Accounts::for_repository`]).
 	 */
 	bound: string | null,
 };

@@ -13,7 +13,7 @@ mod github;
 mod remote;
 
 pub use accounts::{
-    Accounts, account_token, activate_account, credentials, legacy_token, load_accounts,
+    Access, Accounts, account_token, activate_account, credentials, legacy_token, load_accounts,
     remove_account, save_account,
 };
 pub use actions::{CheckState, WorkflowJob, WorkflowRun, WorkflowStep};
