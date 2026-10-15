@@ -56,12 +56,15 @@ jobs:
           }
           id=$(find)
           if [ -z "$id" ]; then
-            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft --verify-tag \
-              --title "Open GIT $GITHUB_REF_NAME" --notes "See the assets below for the installers."
-            id=$(find)
+            # The list does not show a release created a moment ago (v0.2.1 found
+            # nothing half a second later): its id comes from the creation itself.
+            id=$(gh api "repos/$GITHUB_REPOSITORY/releases" \
+              -f tag_name="$GITHUB_REF_NAME" -f name="Open GIT $GITHUB_REF_NAME" \
+              -f body="See the assets below for the installers." -F draft=true \
+              --jq .id)
           fi
           if [ -z "$id" ]; then
-            echo "::error::No release found for $GITHUB_REF_NAME after creating it."
+            echo "::error::No release could be created for $GITHUB_REF_NAME."
             exit 1
           fi
           echo "id=$id" >> "$GITHUB_OUTPUT"
