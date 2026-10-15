@@ -3079,7 +3079,7 @@ dependencies = [
 
 [[package]]
 name = "open-git"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "git2",
  "notify",
@@ -3101,7 +3101,7 @@ dependencies = [
 
 [[package]]
 name = "open-git-ai"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "keyring",
  "open-git-core",
@@ -3115,7 +3115,7 @@ dependencies = [
 
 [[package]]
 name = "open-git-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "git2",
  "libc",
@@ -3128,7 +3128,7 @@ dependencies = [
 
 [[package]]
 name = "open-git-forge"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "chrono",
  "http",
