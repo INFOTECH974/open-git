@@ -34,9 +34,41 @@ jobs:
             exit 1
           fi
 
+  draft:
+    name: Draft release
+    needs: version
+    runs-on: ubuntu-latest
+    outputs:
+      id: ${{ steps.draft.outputs.id }}
+    steps:
+      # Created here, once: the build jobs below start together, and when each
+      # looked for the release itself, two of them could each create one (v0.2.0
+      # came out as two drafts, the installers split between them). A run started
+      # again finds the draft of the first attempt.
+      - name: The draft every installer goes to
+        id: draft
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          find() {
+            gh api "repos/$GITHUB_REPOSITORY/releases" \
+              --jq "[.[] | select(.tag_name == \"$GITHUB_REF_NAME\")][0].id // empty"
+          }
+          id=$(find)
+          if [ -z "$id" ]; then
+            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft --verify-tag \
+              --title "Open GIT $GITHUB_REF_NAME" --notes "See the assets below for the installers."
+            id=$(find)
+          fi
+          if [ -z "$id" ]; then
+            echo "::error::No release found for $GITHUB_REF_NAME after creating it."
+            exit 1
+          fi
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+
   build:
     name: Installer (${{ matrix.name }})
-    needs: version
+    needs: draft
     strategy:
       fail-fast: false
       matrix:
@@ -87,11 +119,7 @@ jobs:
           # Must be set even when the key has no password, or the build asks for one.
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "Open GIT ${{ github.ref_name }}"
-          releaseBody: "See the assets below for the installers."
-          releaseDraft: true
-          prerelease: false
+          releaseId: ${{ needs.draft.outputs.id }}
           # Written once by the `updater` job: these jobs run side by side and
           # would overwrite each other's entries.
           includeUpdaterJson: false
