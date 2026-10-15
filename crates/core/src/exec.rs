@@ -163,7 +163,88 @@ fn command(workdir: &Path, env: &[(OsString, OsString)], args: &[&str]) -> Comma
     command
 }
 
+/// What `git` prints on stderr, as a terminal leaves it on screen.
+///
+/// Progress lines end with `\r` so that a terminal overwrites them in place.
+/// Each is reported, but only the lines that stay are kept: a failure would
+/// otherwise bury its reason under hundreds of percentages.
+#[derive(Default)]
+struct TerminalLines {
+    text: String,
+    partial: Vec<u8>,
+    /// The last line ended by `\r`, until the next one overwrites it.
+    overwritten: Option<String>,
+}
+
+impl TerminalLines {
+    fn feed(&mut self, bytes: &[u8], on_progress: &mut dyn FnMut(&str)) {
+        for &byte in bytes {
+            match byte {
+                b'\r' if !self.partial.is_empty() => {
+                    let line = lossy(&self.partial);
+                    on_progress(line.trim());
+                    self.overwritten = Some(line);
+                    self.partial.clear();
+                }
+                b'\r' => {}
+                b'\n' => {
+                    if !self.partial.is_empty() {
+                        let line = lossy(&self.partial);
+                        on_progress(line.trim());
+                        self.keep(&line);
+                        self.partial.clear();
+                    } else if let Some(line) = self.overwritten.take() {
+                        // `\r\n`: a line of its own after all.
+                        self.keep(&line);
+                    }
+                    self.overwritten = None;
+                }
+                _ => {
+                    self.overwritten = None;
+                    self.partial.push(byte);
+                }
+            }
+        }
+    }
+
+    /// The kept lines, the last one included even without its line break.
+    fn finish(mut self, on_progress: &mut dyn FnMut(&str)) -> String {
+        if !self.partial.is_empty() {
+            let line = lossy(&self.partial);
+            on_progress(line.trim());
+            self.keep(&line);
+        } else if let Some(line) = self.overwritten.take() {
+            self.keep(&line);
+        }
+        self.text
+    }
+
+    fn keep(&mut self, line: &str) {
+        self.text.push_str(line);
+        self.text.push('\n');
+    }
+}
+
+/// `Counting objects: 100% (137/137), done.`, `remote: Enumerating objects: 5,
+/// done.` and the like, in any language: how far a transfer went, not why it
+/// failed.
+fn is_progress(line: &str) -> bool {
+    let line = line.trim_start();
+    let line = line.strip_prefix("remote:").unwrap_or(line);
+    let Some((_, rest)) = line.split_once(": ") else {
+        return false;
+    };
+    let rest = rest.trim_start();
+    let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+    digits > 0 && matches!(rest[digits..].chars().next(), None | Some('%' | ','))
+}
+
 fn failure(args: &[&str], code: Option<i32>, stdout: &str, stderr: &str) -> Error {
+    let stderr = stderr
+        .lines()
+        .filter(|line| !is_progress(line))
+        .collect::<Vec<_>>()
+        .join("\n");
     let message = if stderr.trim().is_empty() {
         stdout.trim().to_owned()
     } else {
@@ -250,9 +331,7 @@ pub(crate) fn git_with_progress(
         lossy(&bytes)
     });
 
-    // Progress lines end with `\r` so that a terminal overwrites them in place.
-    let mut stderr_text = String::new();
-    let mut partial = Vec::new();
+    let mut lines = TerminalLines::default();
     let mut buffer = [0u8; 4096];
     loop {
         let read = match stderr.read(&mut buffer) {
@@ -261,25 +340,9 @@ pub(crate) fn git_with_progress(
             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(_) => break,
         };
-        for &byte in &buffer[..read] {
-            if byte == b'\r' || byte == b'\n' {
-                if !partial.is_empty() {
-                    let line = lossy(&partial);
-                    on_progress(line.trim());
-                    stderr_text.push_str(&line);
-                    stderr_text.push('\n');
-                    partial.clear();
-                }
-            } else {
-                partial.push(byte);
-            }
-        }
+        lines.feed(&buffer[..read], on_progress);
     }
-    if !partial.is_empty() {
-        let line = lossy(&partial);
-        on_progress(line.trim());
-        stderr_text.push_str(&line);
-    }
+    let stderr_text = lines.finish(on_progress);
 
     // Polling keeps the token free for `cancel` while the process finishes.
     let status = loop {
@@ -329,5 +392,60 @@ mod tests {
         assert_eq!(read("open-git-test.first").as_deref(), Some("one"));
         assert_eq!(read("open-git-test.second").as_deref(), Some("two words"));
         assert_eq!(read("open-git-test.third"), None);
+    }
+
+    #[test]
+    fn a_failure_keeps_what_a_terminal_would_show_but_the_progress() {
+        let stderr = "Enumerating objects: 137, done.\n\
+            Counting objects:   0% (1/137)\rCounting objects:  50% (69/137)\r\
+            Counting objects: 100% (137/137), done.\n\
+            Writing objects: 100% (80/80), 1.20 MiB | 2.00 MiB/s, done.\n\
+            remote: Resolving deltas: 100% (40/40)\r\n\
+            Total 80 (delta 40), reused 0 (delta 0)\n\
+            remote: Permission to octo/cat.git denied to ada.\r\n\
+            fatal: unable to access 'https://github.com/octo/cat.git/': The requested URL returned error: 403";
+        let mut reported = Vec::new();
+        let mut lines = TerminalLines::default();
+        // In two pieces, cut in the middle of a line, as a pipe may deliver it.
+        let (first, second) = stderr.split_at(120);
+        let mut report = |line: &str| reported.push(line.to_owned());
+        lines.feed(first.as_bytes(), &mut report);
+        lines.feed(second.as_bytes(), &mut report);
+        let kept = lines.finish(&mut report);
+
+        assert!(reported.contains(&"Counting objects:  50% (69/137)".to_owned()));
+        assert!(!kept.contains("50%"), "{kept}");
+        assert!(
+            kept.contains("remote: Resolving deltas: 100% (40/40)\n"),
+            "{kept}"
+        );
+
+        let Error::Command { message, .. } = failure(&["push"], Some(128), "", &kept) else {
+            panic!("a failed command");
+        };
+        assert_eq!(
+            message,
+            "Total 80 (delta 40), reused 0 (delta 0)\n\
+             remote: Permission to octo/cat.git denied to ada.\n\
+             fatal: unable to access 'https://github.com/octo/cat.git/': The requested URL returned error: 403"
+        );
+    }
+
+    #[test]
+    fn progress_is_told_apart_in_any_language() {
+        assert!(is_progress("Counting objects: 100% (3/3), done."));
+        assert!(is_progress("Énumération des objets: 3, fait."));
+        assert!(is_progress("remote: Compressing objects:  50% (1/2)"));
+        assert!(is_progress("Receiving objects: 7"));
+        assert!(!is_progress(
+            "fatal: unable to access 'https://x/': error: 403"
+        ));
+        assert!(!is_progress("error: failed to push some refs to 'origin'"));
+        assert!(!is_progress(
+            " ! [rejected]        main -> main (fetch first)"
+        ));
+        assert!(!is_progress(
+            "hint: Updates were rejected because the remote contains work"
+        ));
     }
 }

@@ -17,7 +17,10 @@ export function ErrorBanner({ message, onDismiss }: Props) {
       className="flex items-start gap-2 border-b border-destructive/30 bg-destructive/10 px-3 py-1.5 text-sm text-destructive"
     >
       <CircleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
-      <pre className="min-w-0 flex-1 font-sans break-words whitespace-pre-wrap">{message}</pre>
+      {/* A long report scrolls rather than pushing the repository out of the window. */}
+      <pre className="max-h-40 min-w-0 flex-1 overflow-y-auto font-sans break-words whitespace-pre-wrap">
+        {message}
+      </pre>
       <Button variant="ghost" size="icon-xs" aria-label={t("Dismiss")} onClick={onDismiss}>
         <X />
       </Button>
