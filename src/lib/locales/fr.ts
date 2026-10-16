@@ -306,6 +306,9 @@ export const fr: Record<string, string> = {
   "GitHub connects the account your browser is signed in to: check that it is {login}.":
     "GitHub connecte le compte avec lequel votre navigateur est connecté : vérifiez que c'est {login}.",
   "Token refused": "Jeton refusé",
+  "GitHub connected {connected}, not {wanted}.": "GitHub a connecté {connected}, pas {wanted}.",
+  "The token of {wanted} is still refused. Sign in to github.com as {wanted}, or paste a token of that account, then try again.":
+    "Le jeton de {wanted} est toujours refusé. Connectez-vous à github.com en tant que {wanted}, ou collez un jeton de ce compte, puis recommencez.",
   "Connect again": "Reconnecter",
   "Connect {login} again": "Reconnecter {login}",
   "GitHub: {login} — an account must be connected again": "GitHub : {login} — un compte est à reconnecter",

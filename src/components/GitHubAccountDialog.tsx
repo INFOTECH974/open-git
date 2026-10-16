@@ -1,8 +1,8 @@
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { ExternalLink, KeyRound, LoaderCircle, LogOut, UserPlus } from "lucide-react";
+import { ExternalLink, KeyRound, LoaderCircle, LogOut, TriangleAlert, UserPlus } from "lucide-react";
 
-import type { DeviceCode } from "@/bindings";
+import type { Account, DeviceCode } from "@/bindings";
 import { AccountAvatar } from "@/components/AccountAvatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -34,6 +34,8 @@ export function GitHubAccountDialog() {
   const [busy, setBusy] = useState(false);
   const [device, setDevice] = useState<DeviceCode | null>(null);
   const [deviceError, setDeviceError] = useState<string | null>(null);
+  /** The account GitHub connected instead of the one to connect again. */
+  const [otherAccount, setOtherAccount] = useState<string | null>(null);
   const pollTimer = useRef<number | undefined>(undefined);
 
   const open = github.dialog !== null;
@@ -55,20 +57,39 @@ export function GitHubAccountDialog() {
     setToken("");
     setDevice(null);
     setDeviceError(null);
+    setOtherAccount(null);
     setBusy(false);
   }, [open]);
+
+  /**
+   * Closes the dialog once an account is connected, unless it is not the one to
+   * connect again: GitHub connects the account of the token, or the one the
+   * browser is signed in to, whatever was asked.
+   */
+  const signedIn = (account: Account) => {
+    const wanted = github.reconnecting;
+    if (wanted && account.login.toLowerCase() !== wanted.toLowerCase()) {
+      setOtherAccount(account.login);
+      setDevice(null);
+      setToken("");
+      return;
+    }
+    github.closeDialog();
+  };
 
   const submitToken = async (event: FormEvent) => {
     event.preventDefault();
     if (!token.trim()) return;
+    setOtherAccount(null);
     setBusy(true);
-    const ok = await github.signIn(token);
+    const account = await github.signIn(token);
     setBusy(false);
-    if (ok) github.closeDialog();
+    if (account) signedIn(account);
   };
 
   const startDevice = async () => {
     setDeviceError(null);
+    setOtherAccount(null);
     setBusy(true);
     try {
       const code = await github.startDevice();
@@ -78,7 +99,7 @@ export function GitHubAccountDialog() {
         try {
           const status = await github.pollDevice(code.deviceCode);
           if (status.kind === "signedIn") {
-            github.closeDialog();
+            signedIn(status.value);
             return;
           }
           if (status.kind === "failed") {
@@ -216,6 +237,25 @@ export function GitHubAccountDialog() {
           </div>
         ) : (
           <form onSubmit={submitToken} className="space-y-4">
+            {otherAccount && github.reconnecting && (
+              <div
+                role="alert"
+                className="space-y-1 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm"
+              >
+                <p className="flex gap-1.5 font-medium">
+                  <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden />
+                  {t("GitHub connected {connected}, not {wanted}.", {
+                    connected: otherAccount,
+                    wanted: github.reconnecting,
+                  })}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {t("The token of {wanted} is still refused. Sign in to github.com as {wanted}, or paste a token of that account, then try again.", {
+                    wanted: github.reconnecting,
+                  })}
+                </p>
+              </div>
+            )}
             {github.deviceAvailable && (
               <>
                 <Button type="button" className="w-full" onClick={() => void startDevice()} disabled={busy}>

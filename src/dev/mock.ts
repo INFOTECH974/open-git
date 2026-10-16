@@ -487,8 +487,9 @@ function checkoutRef(repo: MockRepo, name: string, kind: RefKind): void {
 /**
  * The accounts that can be connected: each sign-in connects the next one, and
  * signs in to the last one again once they all are. A sign-in reconnects first
- * an account whose token was refused; a token containing "revoked" connects one
- * whose token GitHub then refuses.
+ * an account whose token was refused, and a token ending in `@login` connects
+ * that account, as the token of another account would; a token containing
+ * "revoked" connects one whose token GitHub then refuses.
  */
 const GITHUB_ACCOUNTS: Account[] = [
   {
@@ -1271,7 +1272,9 @@ function handle(command: string, args: Record<string, unknown>): unknown {
       return accountsState();
     case "github_sign_in": {
       if (String(args.token).trim().length < 4) throw githubError("GitHub refused the request: Bad credentials (401 Unauthorized)");
+      const named = String(args.token).split("@").pop();
       const account =
+        GITHUB_ACCOUNTS.find((candidate) => candidate.login === named) ??
         GITHUB_ACCOUNTS.find((candidate) => refusedAccounts.has(candidate.login)) ??
         GITHUB_ACCOUNTS.find((candidate) => !connectedAccount(candidate.login)) ??
         GITHUB_ACCOUNTS[GITHUB_ACCOUNTS.length - 1];

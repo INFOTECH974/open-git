@@ -32,8 +32,11 @@ export interface GitHubState {
    */
   openDialog(view?: AccountDialogView, reconnect?: string): void;
   closeDialog(): void;
-  /** Connects the account `token` belongs to, which becomes the active one. */
-  signIn(token: string): Promise<boolean>;
+  /**
+   * Connects the account `token` belongs to, which becomes the active one;
+   * resolves to that account, or `null` when GitHub refused the token.
+   */
+  signIn(token: string): Promise<Account | null>;
   signOut(login: string): Promise<void>;
   /** Makes `login` the active account. */
   switchAccount(login: string): Promise<void>;
@@ -84,12 +87,12 @@ export function GitHubProvider({ children }: { children: ReactNode }) {
   const signIn = useCallback(async (token: string) => {
     setError(null);
     try {
-      await api.githubSignIn(token);
+      const account = await api.githubSignIn(token);
       setConnected(await api.githubAccounts());
-      return true;
+      return account;
     } catch (failure) {
       setError(errorMessage(failure));
-      return false;
+      return null;
     }
   }, []);
 
