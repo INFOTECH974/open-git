@@ -10,8 +10,11 @@ use crate::{Error, Result};
 
 const DEVICE_CODE_URL: &str = "https://github.com/login/device/code";
 const ACCESS_TOKEN_URL: &str = "https://github.com/login/oauth/access_token";
-/// Enough for private repositories, pull requests and issues.
-const SCOPES: &str = "repo read:user";
+/// Enough for private repositories, pull requests and issues. `workflow` lets a
+/// push create or change a file under `.github/workflows/`, which GitHub refuses
+/// to any token without it; a token issued without that scope never gains it, so
+/// an account connected before it was asked has to be connected again.
+const SCOPES: &str = "repo read:user workflow";
 
 /// What GitHub hands out at the start of the flow.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

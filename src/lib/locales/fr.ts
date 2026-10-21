@@ -338,8 +338,10 @@ export const fr: Record<string, string> = {
   "Sign in with GitHub": "Se connecter avec GitHub",
   "or use a token": "ou utiliser un jeton",
   "Personal access token": "Jeton d'accès personnel",
-  "The token needs the": "Le jeton doit avoir la portée",
-  "scope. It is kept in the system keychain, never in a file.":
+  "The token needs the": "Le jeton doit avoir les portées",
+  "and": "et",
+  // The leading space is part of the English sentence; French glues its period to the scope name.
+  " scopes. It is kept in the system keychain, never in a file.":
     ". Il est conservé dans le trousseau du système, jamais dans un fichier.",
   "Create one on GitHub": "En créer un sur GitHub",
   "Sign in": "Se connecter",

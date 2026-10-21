@@ -21,7 +21,7 @@ import { type AccountDialogView, useGitHub } from "@/lib/github";
 import { useI18n } from "@/lib/i18n";
 
 const TOKEN_URL =
-  "https://github.com/settings/tokens/new?scopes=repo,read:user&description=Open%20GIT";
+  "https://github.com/settings/tokens/new?scopes=repo,read:user,workflow&description=Open%20GIT";
 
 /**
  * The connected GitHub accounts (which one is active, signing out), and the form
@@ -282,7 +282,8 @@ export function GitHubAccountDialog() {
               />
               <p className="text-xs text-muted-foreground">
                 {t("The token needs the")} <code className="font-mono">repo</code>{" "}
-                {t("scope. It is kept in the system keychain, never in a file.")}{" "}
+                {t("and")} <code className="font-mono">workflow</code>
+                {t(" scopes. It is kept in the system keychain, never in a file.")}{" "}
                 <button
                   type="button"
                   className="underline hover:text-foreground"
