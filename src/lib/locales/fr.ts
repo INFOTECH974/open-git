@@ -379,6 +379,30 @@ export const fr: Record<string, string> = {
   "Loading the jobs…": "Chargement des jobs…",
   "No job has started yet.": "Aucun job n'a encore démarré.",
   "Show the workflow runs": "Afficher les exécutions des workflows",
+  "Delete the finished runs…": "Supprimer les exécutions terminées…",
+  "Delete the run…": "Supprimer l'exécution…",
+  "Delete the finished runs?": "Supprimer les exécutions terminées ?",
+  "Delete {workflow} #{number}?": "Supprimer {workflow} #{number} ?",
+  "Counting the finished runs…": "Recherche des exécutions terminées…",
+  "No run is finished: there is nothing to delete.": "Aucune exécution n'est terminée : il n'y a rien à supprimer.",
+  "1 finished run will be deleted from GitHub, with its logs and artifacts.":
+    "1 exécution terminée sera supprimée de GitHub, avec ses journaux et ses artefacts.",
+  "{n} finished runs will be deleted from GitHub, with their logs and artifacts.":
+    "{n} exécutions terminées seront supprimées de GitHub, avec leurs journaux et leurs artefacts.",
+  "Queued and running ones are kept. This cannot be undone.":
+    "Celles en file d'attente ou en cours sont gardées. Impossible de revenir en arrière.",
+  "GitHub lists a thousand at most: delete again for the older ones.":
+    "GitHub en liste mille au plus : recommencez pour les plus anciennes.",
+  "The run will be deleted from GitHub, with its logs and artifacts. This cannot be undone.":
+    "L'exécution sera supprimée de GitHub, avec ses journaux et ses artefacts. Impossible de revenir en arrière.",
+  "Delete the run": "Supprimer l'exécution",
+  "Delete {n} runs": "Supprimer {n} exécutions",
+  "Deleting runs…": "Suppression des exécutions…",
+  "Stop": "Arrêter",
+  // 0 and 1 are singular in French: a wording without agreement.
+  "{done} of {total} runs deleted.": "Exécutions supprimées : {done} sur {total}.",
+  "Run deleted.": "Exécution supprimée.",
+  "{n} runs deleted.": "{n} exécutions supprimées.",
   "Queued": "En file d'attente",
   "Waiting for approval": "En attente d'approbation",
   "In progress": "En cours",

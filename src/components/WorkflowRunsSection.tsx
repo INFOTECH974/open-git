@@ -1,17 +1,22 @@
 import { type Ref, useEffect, useState } from "react";
 import {
+  Check,
   ChevronDown,
   ChevronRight,
+  CircleAlert,
   Copy,
   ExternalLink,
   GitCommitHorizontal,
   LoaderCircle,
   RefreshCw,
+  Trash2,
   Workflow,
+  X,
 } from "lucide-react";
 
 import type { CheckState, WorkflowJob, WorkflowRun } from "@/bindings";
 import { CheckIcon } from "@/components/CheckIcon";
+import { DeleteRunsDialog, type RunsToDelete } from "@/components/dialogs/DeleteRunsDialog";
 import { Button } from "@/components/ui/button";
 import {
   ContextMenu,
@@ -20,7 +25,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { LIVE_POLL_MS, type WorkflowRuns } from "@/hooks/useWorkflowRuns";
+import { LIVE_POLL_MS, type RunDeletion, type WorkflowRuns } from "@/hooks/useWorkflowRuns";
 import { api, errorMessage } from "@/lib/api";
 import { CHECK_LABELS, isRunning } from "@/lib/checks";
 import { duration, relativeTime } from "@/lib/format";
@@ -45,6 +50,13 @@ interface Props {
 const SHOWN = 8;
 /** Once a run is over, its jobs are asked for this many more times at most. */
 const SETTLING_ASKS = 6;
+/** How long a deletion that went through says so. */
+const DELETED_NOTICE_MS = 5_000;
+
+/** Whether GitHub is done with the run, which is when it can be deleted. */
+function isFinished(state: CheckState): boolean {
+  return !isRunning(state) && state !== "waiting";
+}
 
 /** The workflow runs of GitHub Actions, live: each run opens onto its jobs and their steps. */
 export function WorkflowRunsSection({
@@ -60,7 +72,9 @@ export function WorkflowRunsSection({
   const [showAll, setShowAll] = useState(false);
   // Runs opened or closed, by the user or because they started.
   const [opened, setOpened] = useState<ReadonlyMap<number, boolean>>(() => new Map());
-  const { runs, loading, error } = workflows;
+  const [toDelete, setToDelete] = useState<RunsToDelete | null>(null);
+  const { runs, loading, error, deletion } = workflows;
+  const deleting = deletion?.running ?? false;
   const running = runs?.filter((run) => isRunning(run.state)).length ?? 0;
   const now = useNow(open && running > 0);
 
@@ -101,6 +115,19 @@ export function WorkflowRunsSection({
             </span>
           )}
         </button>
+        {open && runs && (
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            className="text-muted-foreground"
+            aria-label={t("Delete the finished runs…")}
+            title={t("Delete the finished runs…")}
+            disabled={deleting}
+            onClick={() => setToDelete({ kind: "finished" })}
+          >
+            <Trash2 />
+          </Button>
+        )}
         {open && (
           <Button
             variant="ghost"
@@ -113,8 +140,21 @@ export function WorkflowRunsSection({
           </Button>
         )}
       </div>
+      <DeleteRunsDialog
+        repoPath={repoPath}
+        request={toDelete}
+        onClose={() => setToDelete(null)}
+        onDelete={workflows.deleteRuns}
+      />
       {open && (
         <ul>
+          {deletion && (
+            <DeletionStatus
+              deletion={deletion}
+              onStop={workflows.stopDeleting}
+              onDismiss={workflows.dismissDeletion}
+            />
+          )}
           {error && <li className="px-7 py-1 text-xs text-destructive">{error}</li>}
           {shown?.map((run) => (
             <RunItem
@@ -128,6 +168,7 @@ export function WorkflowRunsSection({
                 setOpened((previous) => new Map(previous).set(run.id, !(previous.get(run.id) ?? false)))
               }
               onRunAction={onRunAction}
+              onDelete={isFinished(run.state) && !deleting ? () => setToDelete({ kind: "one", run }) : undefined}
               onOpenUrl={onOpenUrl}
             />
           ))}
@@ -148,6 +189,69 @@ export function WorkflowRunsSection({
         </ul>
       )}
     </section>
+  );
+}
+
+interface DeletionProps {
+  deletion: RunDeletion;
+  onStop(): void;
+  onDismiss(): void;
+}
+
+/** Where deleting runs stands, then how it ended: a failure stays until dismissed. */
+function DeletionStatus({ deletion, onStop, onDismiss }: DeletionProps) {
+  const { t } = useI18n();
+  const { done, total, running, error } = deletion;
+  const wentThrough = !running && error === null;
+  useEffect(() => {
+    if (!wentThrough) return;
+    const timer = window.setTimeout(onDismiss, DELETED_NOTICE_MS);
+    return () => window.clearTimeout(timer);
+  }, [wentThrough, onDismiss]);
+
+  if (running) {
+    return (
+      <li className="flex items-center gap-2 py-1 pr-2 pl-3 text-xs text-muted-foreground">
+        <LoaderCircle className="size-3.5 shrink-0 animate-spin" aria-hidden />
+        <span className="min-w-0 flex-1 truncate">{t("Deleting runs…")}</span>
+        <span className="shrink-0 tabular-nums">
+          {done}/{total}
+        </span>
+        <button type="button" className="shrink-0 hover:text-foreground" onClick={onStop}>
+          {t("Stop")}
+        </button>
+      </li>
+    );
+  }
+  const summary =
+    done < total
+      ? t("{done} of {total} runs deleted.", { done, total })
+      : total === 1
+        ? t("Run deleted.")
+        : t("{n} runs deleted.", { n: total });
+  const Icon = error ? CircleAlert : Check;
+  return (
+    <li
+      className={cn(
+        "flex items-start gap-2 py-1 pr-2 pl-3 text-xs",
+        error ? "text-destructive" : "text-muted-foreground",
+      )}
+    >
+      <Icon className="mt-px size-3.5 shrink-0" aria-hidden />
+      <span className="min-w-0 flex-1 break-words">
+        {summary}
+        {error && ` ${error}`}
+      </span>
+      <button
+        type="button"
+        className="shrink-0 text-muted-foreground hover:text-foreground"
+        aria-label={t("Dismiss")}
+        title={t("Dismiss")}
+        onClick={onDismiss}
+      >
+        <X className="size-3.5" />
+      </button>
+    </li>
   );
 }
 
@@ -183,10 +287,12 @@ interface RunProps {
   polling: boolean;
   onToggle(): void;
   onRunAction(action: WorkflowRunAction, run: WorkflowRun): void;
+  /** Unset while the run cannot be deleted: GitHub is not done with it. */
+  onDelete?(): void;
   onOpenUrl(url: string): void;
 }
 
-function RunItem({ repoPath, run, now, open, polling, onToggle, onRunAction, onOpenUrl }: RunProps) {
+function RunItem({ repoPath, run, now, open, polling, onToggle, onRunAction, onDelete, onOpenUrl }: RunProps) {
   const { t } = useI18n();
   const label = t(CHECK_LABELS[run.state]);
   const time =
@@ -231,6 +337,11 @@ function RunItem({ repoPath, run, now, open, polling, onToggle, onRunAction, onO
           <ContextMenuItem onSelect={() => onRunAction("copyUrl", run)}>
             <Copy />
             {t("Copy link")}
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem variant="destructive" disabled={!onDelete} onSelect={() => onDelete?.()}>
+            <Trash2 />
+            {t("Delete the run…")}
           </ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>

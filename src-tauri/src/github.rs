@@ -535,3 +535,29 @@ pub async fn github_workflow_jobs(
     let answer = session.github.workflow_jobs(&session.repo, run).await;
     session.answer(&state, answer)
 }
+
+/// The runs that are over, newest first: what "delete the finished runs"
+/// would delete. The UI deletes them one by one, to show where it stands.
+#[tauri::command]
+#[specta::specta]
+pub async fn github_finished_workflow_runs(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<Vec<u64>> {
+    let session = session(&state, &path)?;
+    let answer = session.github.finished_workflow_runs(&session.repo).await;
+    session.answer(&state, answer)
+}
+
+/// Deletes a run that is over, with its logs and artifacts.
+#[tauri::command]
+#[specta::specta]
+pub async fn github_delete_workflow_run(
+    state: State<'_, AppState>,
+    path: String,
+    run: u64,
+) -> Result<()> {
+    let session = session(&state, &path)?;
+    let answer = session.github.delete_workflow_run(&session.repo, run).await;
+    session.answer(&state, answer)
+}

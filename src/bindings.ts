@@ -181,6 +181,13 @@ export const commands = {
 	/**  The jobs of a workflow run, each with its steps. */
 	githubWorkflowJobs: (path: string, run: number) => typedError<WorkflowJob[], AppError>(__TAURI_INVOKE("github_workflow_jobs", { path, run })),
 	/**
+	 *  The runs that are over, newest first: what "delete the finished runs"
+	 *  would delete. The UI deletes them one by one, to show where it stands.
+	 */
+	githubFinishedWorkflowRuns: (path: string) => typedError<number[], AppError>(__TAURI_INVOKE("github_finished_workflow_runs", { path })),
+	/**  Deletes a run that is over, with its logs and artifacts. */
+	githubDeleteWorkflowRun: (path: string, run: number) => typedError<null, AppError>(__TAURI_INVOKE("github_delete_workflow_run", { path, run })),
+	/**
 	 *  The providers that can be used now: a key is stored for them, or their
 	 *  program is installed.
 	 */

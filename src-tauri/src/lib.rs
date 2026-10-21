@@ -99,6 +99,8 @@ fn specta_builder() -> Builder<tauri::Wry> {
             github::github_close_issue,
             github::github_workflow_runs,
             github::github_workflow_jobs,
+            github::github_finished_workflow_runs,
+            github::github_delete_workflow_run,
             // commit message assistant
             ai::ai_providers,
             ai::ai_save_key,

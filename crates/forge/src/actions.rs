@@ -1,12 +1,14 @@
-//! GitHub Actions: the workflow runs of a repository, their jobs and their steps.
+//! GitHub Actions: the workflow runs of a repository, their jobs and their
+//! steps; and deleting the runs that are over.
 //!
 //! GitHub has nothing to push to a desktop application, so the UI asks again
 //! every few seconds while something runs; see [`GitHub::poll`].
 
 use chrono::{DateTime, Utc};
+use http::StatusCode;
 use serde::{Deserialize, Serialize};
 
-use crate::{GitHub, GitHubRepo, Result};
+use crate::{Error, GitHub, GitHubRepo, Result};
 
 /// Where a workflow run, a job or a step stands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -106,6 +108,10 @@ pub struct WorkflowStep {
 const RUNS: u8 = 30;
 /// GitHub's largest page; a run with more jobs than that shows its first hundred.
 const JOBS: u8 = 100;
+/// GitHub's largest page, and how many of them a query filtered by status may
+/// span: GitHub stops at a thousand runs for such a query.
+const FINISHED_PAGE: usize = 100;
+const FINISHED_PAGES: usize = 10;
 
 impl GitHub {
     /// The latest workflow runs of the repository, on any branch, newest first.
@@ -130,6 +136,53 @@ impl GitHub {
             page.jobs.into_iter().map(workflow_job).collect()
         })
         .await
+    }
+
+    /// The runs that are over, whatever their verdict, newest first: those that
+    /// can be deleted. A thousand at most, which is all GitHub lists.
+    pub async fn finished_workflow_runs(&self, repo: &GitHubRepo) -> Result<Vec<u64>> {
+        #[derive(Deserialize)]
+        struct Page {
+            #[serde(default)]
+            workflow_runs: Vec<Listed>,
+        }
+        #[derive(Deserialize)]
+        struct Listed {
+            id: u64,
+        }
+
+        let mut found = Vec::new();
+        for page in 1..=FINISHED_PAGES {
+            let route = format!(
+                "/repos/{}/{}/actions/runs?status=completed&per_page={FINISHED_PAGE}&page={page}&exclude_pull_requests=true",
+                repo.owner, repo.name
+            );
+            let listed = self.client.get::<Page, _, ()>(route, None).await?;
+            let count = listed.workflow_runs.len();
+            found.extend(listed.workflow_runs.into_iter().map(|run| run.id));
+            if count < FINISHED_PAGE {
+                break;
+            }
+        }
+        Ok(found)
+    }
+
+    /// Deletes a run that is over, with its logs and artifacts. GitHub refuses
+    /// to delete one that is queued or running. A run already gone is not an error.
+    pub async fn delete_workflow_run(&self, repo: &GitHubRepo, run: u64) -> Result<()> {
+        let route = format!("/repos/{}/{}/actions/runs/{run}", repo.owner, repo.name);
+        let response = self.client._delete(route, None::<&()>).await?;
+        match octocrab::map_github_error(response).await {
+            Ok(_) => Ok(()),
+            Err(error) => {
+                let error = Error::from(error);
+                if error.status() == Some(StatusCode::NOT_FOUND) {
+                    Ok(())
+                } else {
+                    Err(error)
+                }
+            }
+        }
     }
 }
 

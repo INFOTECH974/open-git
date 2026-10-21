@@ -10,9 +10,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { buttonVariants } from "@/components/ui/button";
 import { useI18n } from "@/lib/i18n";
-import { cn } from "@/lib/utils";
 
 /** What a confirmation asks; `null` closes the dialog. */
 export interface Confirmation {
@@ -45,7 +43,7 @@ export function ConfirmDialog({ confirmation, onClose }: Props) {
         <AlertDialogFooter>
           <AlertDialogCancel>{t("Cancel")}</AlertDialogCancel>
           <AlertDialogAction
-            className={cn(confirmation?.destructive && buttonVariants({ variant: "destructive" }))}
+            variant={confirmation?.destructive ? "destructive" : "default"}
             onClick={() => {
               confirmation?.onConfirm();
               onClose();

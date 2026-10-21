@@ -11,6 +11,23 @@ export const LIVE_POLL_MS = 5_000;
 const IDLE_POLL_MS = 60_000;
 /** GitHub creates the runs a few seconds after a push: look closely for this long. */
 const EXPECTING_MS = 45_000;
+/**
+ * Runs are deleted one at a time, one every this many milliseconds at most.
+ * On top of the hourly quota, GitHub allows 900 points a minute and a DELETE
+ * costs 5 of them: 150 deletions a minute stay clear of that limit.
+ */
+const DELETE_MS = 400;
+
+/** Where deleting runs stands. */
+export interface RunDeletion {
+  /** Runs deleted so far. */
+  done: number;
+  total: number;
+  /** Still deleting; otherwise it went through, was stopped or failed. */
+  running: boolean;
+  /** Why it stopped before the end. */
+  error: string | null;
+}
 
 /** What GitHub Actions is doing for a repository. */
 export interface WorkflowRuns {
@@ -23,6 +40,13 @@ export interface WorkflowRuns {
   loading: boolean;
   error: string | null;
   reload(): void;
+  /** `null` until runs are deleted, and once how it ended was dismissed. */
+  deletion: RunDeletion | null;
+  /** Deletes these runs one after the other; each leaves `runs` once deleted. */
+  deleteRuns(ids: number[]): void;
+  /** Stops deleting once the run being deleted is gone. */
+  stopDeleting(): void;
+  dismissDeletion(): void;
 }
 
 /**
@@ -122,7 +146,74 @@ export function useWorkflowRuns(
     };
   }, [enabled, path, account, reloads, reloadAccounts]);
 
-  const byCommit = useMemo(() => checksByCommit(runs ?? []), [runs]);
+  // Deleting runs. Those deleted leave the list at once, without waiting for
+  // GitHub to be asked again, and an answer given before they were deleted
+  // does not bring them back.
+  const [deleted, setDeleted] = useState<ReadonlySet<number>>(() => new Set());
+  const [deletion, setDeletion] = useState<RunDeletion | null>(null);
+  const deleting = useRef<{ stopped: boolean } | null>(null);
 
-  return { runs, byCommit, loading, error, reload };
+  useEffect(
+    () => () => {
+      if (deleting.current) deleting.current.stopped = true;
+    },
+    [path],
+  );
+
+  const deleteRuns = useCallback(
+    (ids: number[]) => {
+      if (deleting.current || ids.length === 0) return;
+      const job = { stopped: false };
+      deleting.current = job;
+      const total = ids.length;
+      setDeletion({ done: 0, total, running: true, error: null });
+      void (async () => {
+        let done = 0;
+        let error: string | null = null;
+        for (const id of ids) {
+          if (job.stopped) break;
+          const started = Date.now();
+          try {
+            await api.githubDeleteWorkflowRun(path, id);
+          } catch (failure) {
+            error = errorMessage(failure);
+            if (isTokenRefused(failure)) void reloadAccounts();
+            break;
+          }
+          done += 1;
+          setDeleted((previous) => new Set(previous).add(id));
+          setDeletion({ done, total, running: true, error: null });
+          const rest = DELETE_MS - (Date.now() - started);
+          if (rest > 0 && done < total) await new Promise((resolve) => window.setTimeout(resolve, rest));
+        }
+        deleting.current = null;
+        setDeletion({ done, total, running: false, error });
+        reload();
+      })();
+    },
+    [path, reload, reloadAccounts],
+  );
+
+  const stopDeleting = useCallback(() => {
+    if (deleting.current) deleting.current.stopped = true;
+  }, []);
+  const dismissDeletion = useCallback(() => setDeletion(null), []);
+
+  const shown = useMemo(
+    () => (runs && deleted.size > 0 ? runs.filter((run) => !deleted.has(run.id)) : runs),
+    [runs, deleted],
+  );
+  const byCommit = useMemo(() => checksByCommit(shown ?? []), [shown]);
+
+  return {
+    runs: shown,
+    byCommit,
+    loading,
+    error,
+    reload,
+    deletion,
+    deleteRuns,
+    stopDeleting,
+    dismissDeletion,
+  };
 }

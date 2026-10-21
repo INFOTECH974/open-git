@@ -116,7 +116,7 @@ pub struct RemoteRepository {
 /// A connected GitHub account. Cheap to clone: the client is reference-counted.
 #[derive(Clone)]
 pub struct GitHub {
-    client: Octocrab,
+    pub(crate) client: Octocrab,
     polled: Arc<Polled>,
 }
 

@@ -166,6 +166,10 @@ export const api = {
   githubWorkflowRuns: (path: string) => unwrap(commands.githubWorkflowRuns(path)),
   githubWorkflowJobs: (path: string, run: number) =>
     unwrap(commands.githubWorkflowJobs(path, run)),
+  /** The runs that are over, newest first; a thousand at most. */
+  githubFinishedWorkflowRuns: (path: string) => unwrap(commands.githubFinishedWorkflowRuns(path)),
+  githubDeleteWorkflowRun: (path: string, run: number) =>
+    unwrap(commands.githubDeleteWorkflowRun(path, run)),
 
   // commit message assistant
   /** The providers an API key is stored for. */

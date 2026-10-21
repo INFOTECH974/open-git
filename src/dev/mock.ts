@@ -744,16 +744,25 @@ function startRun(
   runPlans.unshift({ id: nextRunId++, workflow, number, event, branch, commit, createdAt: Math.floor(createdAt), jobs });
 }
 
-// What ran before the application opened: the commits behind `origin/main`, and a release.
+// What ran before the application opened: the commits behind `origin/main`, one
+// push a day before the last two, and a release; enough to try deleting them.
 {
   const pushed: string[] = [];
-  for (let id = remoteTips.get("origin/main"); id && pushed.length < 3; id = byId.get(id)?.parents[0]) {
+  for (let id = remoteTips.get("origin/main"); id && pushed.length < 16; id = byId.get(id)?.parents[0]) {
     pushed.push(id);
   }
   const [latestTag, tagged] = [...tagTips].pop()!;
-  startRun("Release", "push", latestTag, tagged, releaseJobs(), now - 86400 * 6);
-  if (pushed[2]) startRun("CI", "push", "main", pushed[2], ciJobs(), now - 3600 * 30);
-  if (pushed[1]) startRun("CI", "push", "main", pushed[1], ciJobs(true), now - 3600 * 4);
+  const past: Parameters<typeof startRun>[] = [
+    ["Release", "push", latestTag, tagged, releaseJobs(), now - 86400 * 6 - 3600],
+  ];
+  if (pushed[2]) past.push(["CI", "push", "main", pushed[2], ciJobs(), now - 3600 * 30]);
+  if (pushed[1]) past.push(["CI", "push", "main", pushed[1], ciJobs(true), now - 3600 * 4]);
+  for (let index = 3; index < pushed.length; index++) {
+    past.push(["CI", "push", "main", pushed[index], ciJobs(index % 5 === 0), now - 86400 * (index - 1)]);
+  }
+  // Oldest first, as they ran: each new run goes on top of the list.
+  past.sort((a, b) => (a[5] ?? 0) - (b[5] ?? 0));
+  for (const run of past) startRun(...run);
 }
 
 function jobAt(run: RunPlan, plan: JobPlan, index: number, at: number): WorkflowJob {
@@ -1401,6 +1410,26 @@ function handle(command: string, args: Record<string, unknown>): unknown {
       const run = runPlans.find((candidate) => candidate.id === Number(args.run));
       if (!run) throw githubError("GitHub refused the request: Not Found (404 Not Found)");
       return delayed(jobsAt(run), 200);
+    }
+    case "github_finished_workflow_runs": {
+      requireAccount(path);
+      const finished = runPlans.filter((run) => {
+        const { state } = runAt(run);
+        return state !== "queued" && state !== "inProgress";
+      });
+      return delayed(finished.slice(0, 1000).map((run) => run.id), 600);
+    }
+    case "github_delete_workflow_run": {
+      requireAccount(path);
+      const index = runPlans.findIndex((candidate) => candidate.id === Number(args.run));
+      // Already gone: GitHub says 404, which the backend takes for done.
+      if (index === -1) return delayed(null, 150);
+      const { state } = runAt(runPlans[index]);
+      if (state === "queued" || state === "inProgress") {
+        throw githubError("GitHub refused the request: Cannot delete a workflow run that is in progress (409 Conflict)");
+      }
+      runPlans.splice(index, 1);
+      return delayed(null, 150);
     }
     // commit message assistant
     case "ai_providers":
