@@ -561,3 +561,54 @@ pub async fn github_delete_workflow_run(
     let answer = session.github.delete_workflow_run(&session.repo, run).await;
     session.answer(&state, answer)
 }
+
+/// Starts a run that is over again, every job of it. GitHub refuses while it
+/// still runs.
+#[tauri::command]
+#[specta::specta]
+pub async fn github_rerun_workflow_run(
+    state: State<'_, AppState>,
+    path: String,
+    run: u64,
+) -> Result<()> {
+    let session = session(&state, &path)?;
+    let answer = session.github.rerun_workflow_run(&session.repo, run).await;
+    session.answer(&state, answer)
+}
+
+/// Starts the failed jobs of a run that is over again, with those that depend
+/// on them. GitHub refuses while it still runs, and when no job failed.
+#[tauri::command]
+#[specta::specta]
+pub async fn github_rerun_failed_jobs(
+    state: State<'_, AppState>,
+    path: String,
+    run: u64,
+) -> Result<()> {
+    let session = session(&state, &path)?;
+    let answer = session.github.rerun_failed_jobs(&session.repo, run).await;
+    session.answer(&state, answer)
+}
+
+/// Cancels a run that is queued or in progress; GitHub stops its jobs one by
+/// one, which can take a minute. A run that is over cannot be cancelled.
+#[tauri::command]
+#[specta::specta]
+pub async fn github_cancel_workflow_run(
+    state: State<'_, AppState>,
+    path: String,
+    run: u64,
+) -> Result<()> {
+    let session = session(&state, &path)?;
+    let answer = session.github.cancel_workflow_run(&session.repo, run).await;
+    session.answer(&state, answer)
+}
+
+/// Starts one job of a run that is over again, with the jobs that depend on it.
+#[tauri::command]
+#[specta::specta]
+pub async fn github_rerun_job(state: State<'_, AppState>, path: String, job: u64) -> Result<()> {
+    let session = session(&state, &path)?;
+    let answer = session.github.rerun_job(&session.repo, job).await;
+    session.answer(&state, answer)
+}

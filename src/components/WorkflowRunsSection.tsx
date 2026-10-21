@@ -1,5 +1,6 @@
-import { type Ref, useEffect, useState } from "react";
+import { type ReactNode, type Ref, useEffect, useState } from "react";
 import {
+  Ban,
   Check,
   ChevronDown,
   ChevronRight,
@@ -9,6 +10,7 @@ import {
   GitCommitHorizontal,
   LoaderCircle,
   RefreshCw,
+  RotateCw,
   Trash2,
   Workflow,
   X,
@@ -25,7 +27,13 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { LIVE_POLL_MS, type RunDeletion, type WorkflowRuns } from "@/hooks/useWorkflowRuns";
+import {
+  LIVE_POLL_MS,
+  type RunCommand,
+  type RunCommandKind,
+  type RunDeletion,
+  type WorkflowRuns,
+} from "@/hooks/useWorkflowRuns";
 import { api, errorMessage } from "@/lib/api";
 import { CHECK_LABELS, isRunning } from "@/lib/checks";
 import { duration, relativeTime } from "@/lib/format";
@@ -50,10 +58,10 @@ interface Props {
 const SHOWN = 8;
 /** Once a run is over, its jobs are asked for this many more times at most. */
 const SETTLING_ASKS = 6;
-/** How long a deletion that went through says so. */
-const DELETED_NOTICE_MS = 5_000;
+/** How long a deletion, a restart or a cancellation that went through says so. */
+const DONE_NOTICE_MS = 5_000;
 
-/** Whether GitHub is done with the run, which is when it can be deleted. */
+/** Whether GitHub is done with the run: when it can be deleted or started again. */
 function isFinished(state: CheckState): boolean {
   return !isRunning(state) && state !== "waiting";
 }
@@ -73,8 +81,10 @@ export function WorkflowRunsSection({
   // Runs opened or closed, by the user or because they started.
   const [opened, setOpened] = useState<ReadonlyMap<number, boolean>>(() => new Map());
   const [toDelete, setToDelete] = useState<RunsToDelete | null>(null);
-  const { runs, loading, error, deletion } = workflows;
+  const { runs, loading, error, deletion, command } = workflows;
   const deleting = deletion?.running ?? false;
+  // One command at a time: the menus wait for GitHub's answer.
+  const busy = command?.pending ?? false;
   const running = runs?.filter((run) => isRunning(run.state)).length ?? 0;
   const now = useNow(open && running > 0);
 
@@ -155,6 +165,7 @@ export function WorkflowRunsSection({
               onDismiss={workflows.dismissDeletion}
             />
           )}
+          {command && <CommandStatus command={command} onDismiss={workflows.dismissCommand} />}
           {error && <li className="px-7 py-1 text-xs text-destructive">{error}</li>}
           {shown?.map((run) => (
             <RunItem
@@ -164,10 +175,12 @@ export function WorkflowRunsSection({
               now={now}
               open={opened.get(run.id) ?? false}
               polling={active}
+              busy={busy}
               onToggle={() =>
                 setOpened((previous) => new Map(previous).set(run.id, !(previous.get(run.id) ?? false)))
               }
               onRunAction={onRunAction}
+              onCommand={(kind, job) => workflows.act(kind, run, job)}
               onDelete={isFinished(run.state) && !deleting ? () => setToDelete({ kind: "one", run }) : undefined}
               onOpenUrl={onOpenUrl}
             />
@@ -192,43 +205,36 @@ export function WorkflowRunsSection({
   );
 }
 
-interface DeletionProps {
-  deletion: RunDeletion;
-  onStop(): void;
+interface NoticeProps {
+  /** Still going: a spinner, no way to dismiss. */
+  pending: boolean;
+  error: string | null;
+  /** What is going on, or how it ended; empty to show a failure alone. */
+  children: ReactNode;
+  /** Shown while pending, after the text. */
+  aside?: ReactNode;
   onDismiss(): void;
 }
 
-/** Where deleting runs stands, then how it ended: a failure stays until dismissed. */
-function DeletionStatus({ deletion, onStop, onDismiss }: DeletionProps) {
+/** A line at the top of the section: what is going on, then how it ended. A failure stays until dismissed. */
+function Notice({ pending, error, children, aside, onDismiss }: NoticeProps) {
   const { t } = useI18n();
-  const { done, total, running, error } = deletion;
-  const wentThrough = !running && error === null;
+  const wentThrough = !pending && error === null;
   useEffect(() => {
     if (!wentThrough) return;
-    const timer = window.setTimeout(onDismiss, DELETED_NOTICE_MS);
+    const timer = window.setTimeout(onDismiss, DONE_NOTICE_MS);
     return () => window.clearTimeout(timer);
   }, [wentThrough, onDismiss]);
 
-  if (running) {
+  if (pending) {
     return (
       <li className="flex items-center gap-2 py-1 pr-2 pl-3 text-xs text-muted-foreground">
         <LoaderCircle className="size-3.5 shrink-0 animate-spin" aria-hidden />
-        <span className="min-w-0 flex-1 truncate">{t("Deleting runs…")}</span>
-        <span className="shrink-0 tabular-nums">
-          {done}/{total}
-        </span>
-        <button type="button" className="shrink-0 hover:text-foreground" onClick={onStop}>
-          {t("Stop")}
-        </button>
+        <span className="min-w-0 flex-1 truncate">{children}</span>
+        {aside}
       </li>
     );
   }
-  const summary =
-    done < total
-      ? t("{done} of {total} runs deleted.", { done, total })
-      : total === 1
-        ? t("Run deleted.")
-        : t("{n} runs deleted.", { n: total });
   const Icon = error ? CircleAlert : Check;
   return (
     <li
@@ -239,8 +245,8 @@ function DeletionStatus({ deletion, onStop, onDismiss }: DeletionProps) {
     >
       <Icon className="mt-px size-3.5 shrink-0" aria-hidden />
       <span className="min-w-0 flex-1 break-words">
-        {summary}
-        {error && ` ${error}`}
+        {children}
+        {error && (children ? ` ${error}` : error)}
       </span>
       <button
         type="button"
@@ -252,6 +258,71 @@ function DeletionStatus({ deletion, onStop, onDismiss }: DeletionProps) {
         <X className="size-3.5" />
       </button>
     </li>
+  );
+}
+
+interface DeletionProps {
+  deletion: RunDeletion;
+  onStop(): void;
+  onDismiss(): void;
+}
+
+/** Where deleting runs stands, then how it ended. */
+function DeletionStatus({ deletion, onStop, onDismiss }: DeletionProps) {
+  const { t } = useI18n();
+  const { done, total, running, error } = deletion;
+  const summary = running
+    ? t("Deleting runs…")
+    : done < total
+      ? t("{done} of {total} runs deleted.", { done, total })
+      : total === 1
+        ? t("Run deleted.")
+        : t("{n} runs deleted.", { n: total });
+  return (
+    <Notice
+      pending={running}
+      error={error}
+      onDismiss={onDismiss}
+      aside={
+        <>
+          <span className="shrink-0 tabular-nums">
+            {done}/{total}
+          </span>
+          <button type="button" className="shrink-0 hover:text-foreground" onClick={onStop}>
+            {t("Stop")}
+          </button>
+        </>
+      }
+    >
+      {summary}
+    </Notice>
+  );
+}
+
+interface CommandProps {
+  command: RunCommand;
+  onDismiss(): void;
+}
+
+/** A run being started again or cancelled, then GitHub's answer: a refusal stays until dismissed. */
+function CommandStatus({ command, onDismiss }: CommandProps) {
+  const { t } = useI18n();
+  const { kind, run, job, pending, error } = command;
+  const vars = { workflow: run.workflow, number: run.number, job: job?.name ?? "" };
+  const text = {
+    rerun: pending ? t("Starting {workflow} #{number} again…", vars) : t("{workflow} #{number} is starting again.", vars),
+    rerunFailed: pending
+      ? t("Starting the failed jobs of {workflow} #{number} again…", vars)
+      : t("The failed jobs of {workflow} #{number} are starting again.", vars),
+    rerunJob: pending
+      ? t("Starting {job} again…", vars)
+      : t("{job} is starting again, with the jobs that depend on it.", vars),
+    cancel: pending ? t("Cancelling {workflow} #{number}…", vars) : t("{workflow} #{number} is being cancelled.", vars),
+  }[kind];
+  return (
+    <Notice pending={pending} error={error} onDismiss={onDismiss}>
+      {error ? "" : text}
+    </Notice>
   );
 }
 
@@ -285,16 +356,33 @@ interface RunProps {
   now: number;
   open: boolean;
   polling: boolean;
+  /** A command on some run is waiting for GitHub: no other is offered meanwhile. */
+  busy: boolean;
   onToggle(): void;
   onRunAction(action: WorkflowRunAction, run: WorkflowRun): void;
+  /** Starts the run (or `job`) again, or cancels it. */
+  onCommand(kind: RunCommandKind, job?: WorkflowJob): void;
   /** Unset while the run cannot be deleted: GitHub is not done with it. */
   onDelete?(): void;
   onOpenUrl(url: string): void;
 }
 
-function RunItem({ repoPath, run, now, open, polling, onToggle, onRunAction, onDelete, onOpenUrl }: RunProps) {
+function RunItem({
+  repoPath,
+  run,
+  now,
+  open,
+  polling,
+  busy,
+  onToggle,
+  onRunAction,
+  onCommand,
+  onDelete,
+  onOpenUrl,
+}: RunProps) {
   const { t } = useI18n();
   const label = t(CHECK_LABELS[run.state]);
+  const finished = isFinished(run.state);
   const time =
     run.state === "inProgress"
       ? duration(now - run.startedAt)
@@ -318,6 +406,7 @@ function RunItem({ repoPath, run, now, open, polling, onToggle, onRunAction, onD
               <p className="truncate text-sm">{run.title}</p>
               <p className="truncate text-[11px] text-muted-foreground tabular-nums">
                 {run.workflow} #{run.number}
+                {run.attempt > 1 && ` (${run.attempt})`}
                 {run.branch && ` · ${run.branch}`} · {time}
               </p>
             </div>
@@ -334,6 +423,27 @@ function RunItem({ repoPath, run, now, open, polling, onToggle, onRunAction, onD
             {t("Show the commit in the graph")}
           </ContextMenuItem>
           <ContextMenuSeparator />
+          {finished ? (
+            <>
+              {/* GitHub counts the jobs of a cancelled run as failed: they can be started again alone. */}
+              {(run.state === "failure" || run.state === "cancelled") && (
+                <ContextMenuItem disabled={busy} onSelect={() => onCommand("rerunFailed")}>
+                  <RotateCw />
+                  {t("Rerun the failed jobs")}
+                </ContextMenuItem>
+              )}
+              <ContextMenuItem disabled={busy} onSelect={() => onCommand("rerun")}>
+                <RotateCw />
+                {t("Rerun all jobs")}
+              </ContextMenuItem>
+            </>
+          ) : (
+            <ContextMenuItem disabled={busy} onSelect={() => onCommand("cancel")}>
+              <Ban />
+              {t("Cancel the run")}
+            </ContextMenuItem>
+          )}
+          <ContextMenuSeparator />
           <ContextMenuItem onSelect={() => onRunAction("copyUrl", run)}>
             <Copy />
             {t("Copy link")}
@@ -345,7 +455,16 @@ function RunItem({ repoPath, run, now, open, polling, onToggle, onRunAction, onD
           </ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>
-      {open && <RunJobs repoPath={repoPath} run={run} now={now} polling={polling} onOpenUrl={onOpenUrl} />}
+      {open && (
+        <RunJobs
+          repoPath={repoPath}
+          run={run}
+          now={now}
+          polling={polling}
+          onRerunJob={finished && !busy ? (job) => onCommand("rerunJob", job) : undefined}
+          onOpenUrl={onOpenUrl}
+        />
+      )}
     </li>
   );
 }
@@ -355,11 +474,13 @@ interface JobsProps {
   run: WorkflowRun;
   now: number;
   polling: boolean;
+  /** Unset while a job cannot be started again: the run is not over, or GitHub is being asked something. */
+  onRerunJob?(job: WorkflowJob): void;
   onOpenUrl(url: string): void;
 }
 
 /** The jobs of an open run, asked again every few seconds while it runs. */
-function RunJobs({ repoPath, run, now, polling, onOpenUrl }: JobsProps) {
+function RunJobs({ repoPath, run, now, polling, onRerunJob, onOpenUrl }: JobsProps) {
   const { t } = useI18n();
   const [jobs, setJobs] = useState<WorkflowJob[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -418,6 +539,7 @@ function RunJobs({ repoPath, run, now, polling, onOpenUrl }: JobsProps) {
               return next;
             })
           }
+          onRerun={onRerunJob && (() => onRerunJob(job))}
           onOpenUrl={onOpenUrl}
         />
       ))}
@@ -430,10 +552,12 @@ interface JobProps {
   now: number;
   open: boolean;
   onToggle(): void;
+  /** Unset while the job cannot be started again. */
+  onRerun?(): void;
   onOpenUrl(url: string): void;
 }
 
-function JobItem({ job, now, open, onToggle, onOpenUrl }: JobProps) {
+function JobItem({ job, now, open, onToggle, onRerun, onOpenUrl }: JobProps) {
   const { t } = useI18n();
   const time = elapsed(job.state, job.startedAt, job.completedAt, now);
   // Closed, a job still tells the step it is at, or the one that broke it.
@@ -462,6 +586,15 @@ function JobItem({ job, now, open, onToggle, onOpenUrl }: JobProps) {
             <ExternalLink />
             {t("Open on GitHub")}
           </ContextMenuItem>
+          {onRerun && (
+            <>
+              <ContextMenuSeparator />
+              <ContextMenuItem onSelect={onRerun}>
+                <RotateCw />
+                {t("Rerun this job")}
+              </ContextMenuItem>
+            </>
+          )}
         </ContextMenuContent>
       </ContextMenu>
       {open ? (

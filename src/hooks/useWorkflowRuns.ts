@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { WorkflowRun } from "@/bindings";
+import type { WorkflowJob, WorkflowRun } from "@/bindings";
 import { api, errorMessage, isTokenRefused } from "@/lib/api";
 import { type CommitChecks, checksByCommit, isRunning } from "@/lib/checks";
 import { useGitHub } from "@/lib/github";
@@ -29,6 +29,24 @@ export interface RunDeletion {
   error: string | null;
 }
 
+/**
+ * What the user asks GitHub to do with a run: start it again (every job, its
+ * failed jobs, or one job and those that depend on it), or cancel it.
+ */
+export type RunCommandKind = "rerun" | "rerunFailed" | "rerunJob" | "cancel";
+
+/** Where a command on a run stands. */
+export interface RunCommand {
+  kind: RunCommandKind;
+  run: WorkflowRun;
+  /** The job started again, for `rerunJob`. */
+  job: WorkflowJob | null;
+  /** GitHub has not answered yet. */
+  pending: boolean;
+  /** Why GitHub refused. */
+  error: string | null;
+}
+
 /** What GitHub Actions is doing for a repository. */
 export interface WorkflowRuns {
   /**
@@ -47,6 +65,15 @@ export interface WorkflowRuns {
   /** Stops deleting once the run being deleted is gone. */
   stopDeleting(): void;
   dismissDeletion(): void;
+  /** `null` until a run is acted on, and once how it went was dismissed. */
+  command: RunCommand | null;
+  /**
+   * Asks GitHub to start `run` again, or to cancel it; `job` is the one to
+   * start again for `rerunJob`. One command at a time: the runs are asked for
+   * again as soon as GitHub answers, then closely for a while, as after a push.
+   */
+  act(kind: RunCommandKind, run: WorkflowRun, job?: WorkflowJob): void;
+  dismissCommand(): void;
 }
 
 /**
@@ -199,6 +226,48 @@ export function useWorkflowRuns(
   }, []);
   const dismissDeletion = useCallback(() => setDeletion(null), []);
 
+  // Starting a run again, or cancelling it. GitHub answers at once and acts a
+  // moment later: the run is asked for again right away, then every few
+  // seconds, until it shows as queued (or cancelled).
+  const [command, setCommand] = useState<RunCommand | null>(null);
+  const acting = useRef(false);
+
+  const act = useCallback(
+    (kind: RunCommandKind, run: WorkflowRun, job: WorkflowJob | null = null) => {
+      if (acting.current) return;
+      acting.current = true;
+      setCommand({ kind, run, job, pending: true, error: null });
+      void (async () => {
+        let error: string | null = null;
+        try {
+          switch (kind) {
+            case "rerun":
+              await api.githubRerunWorkflowRun(path, run.id);
+              break;
+            case "rerunFailed":
+              await api.githubRerunFailedJobs(path, run.id);
+              break;
+            case "rerunJob":
+              if (job) await api.githubRerunJob(path, job.id);
+              break;
+            case "cancel":
+              await api.githubCancelWorkflowRun(path, run.id);
+              break;
+          }
+        } catch (failure) {
+          error = errorMessage(failure);
+          if (isTokenRefused(failure)) void reloadAccounts();
+        }
+        acting.current = false;
+        setCommand({ kind, run, job, pending: false, error });
+        expectingUntil.current = Date.now() + EXPECTING_MS;
+        reload();
+      })();
+    },
+    [path, reload, reloadAccounts],
+  );
+  const dismissCommand = useCallback(() => setCommand(null), []);
+
   const shown = useMemo(
     () => (runs && deleted.size > 0 ? runs.filter((run) => !deleted.has(run.id)) : runs),
     [runs, deleted],
@@ -215,5 +284,8 @@ export function useWorkflowRuns(
     deleteRuns,
     stopDeleting,
     dismissDeletion,
+    command,
+    act,
+    dismissCommand,
   };
 }

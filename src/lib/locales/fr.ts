@@ -397,6 +397,21 @@ export const fr: Record<string, string> = {
   "Show the workflow runs": "Afficher les exécutions des workflows",
   "Delete the finished runs…": "Supprimer les exécutions terminées…",
   "Delete the run…": "Supprimer l'exécution…",
+  "Rerun the failed jobs": "Relancer les jobs en échec",
+  "Rerun all jobs": "Relancer tous les jobs",
+  "Rerun this job": "Relancer ce job",
+  "Cancel the run": "Annuler l'exécution",
+  "Starting {workflow} #{number} again…": "Relance de {workflow} #{number}…",
+  "Starting the failed jobs of {workflow} #{number} again…":
+    "Relance des jobs en échec de {workflow} #{number}…",
+  "Starting {job} again…": "Relance de {job}…",
+  "Cancelling {workflow} #{number}…": "Annulation de {workflow} #{number}…",
+  "{workflow} #{number} is starting again.": "{workflow} #{number} redémarre.",
+  "The failed jobs of {workflow} #{number} are starting again.":
+    "Les jobs en échec de {workflow} #{number} redémarrent.",
+  "{job} is starting again, with the jobs that depend on it.":
+    "{job} redémarre, avec les jobs qui en dépendent.",
+  "{workflow} #{number} is being cancelled.": "{workflow} #{number} est en cours d'annulation.",
   "Delete the finished runs?": "Supprimer les exécutions terminées ?",
   "Delete {workflow} #{number}?": "Supprimer {workflow} #{number} ?",
   "Counting the finished runs…": "Recherche des exécutions terminées…",

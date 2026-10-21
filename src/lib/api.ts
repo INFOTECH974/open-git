@@ -173,6 +173,17 @@ export const api = {
   githubFinishedWorkflowRuns: (path: string) => unwrap(commands.githubFinishedWorkflowRuns(path)),
   githubDeleteWorkflowRun: (path: string, run: number) =>
     unwrap(commands.githubDeleteWorkflowRun(path, run)),
+  /** Starts a finished run again, every job of it; GitHub refuses while it runs. */
+  githubRerunWorkflowRun: (path: string, run: number) =>
+    unwrap(commands.githubRerunWorkflowRun(path, run)),
+  /** Starts the failed jobs of a finished run again, with those that depend on them. */
+  githubRerunFailedJobs: (path: string, run: number) =>
+    unwrap(commands.githubRerunFailedJobs(path, run)),
+  /** Asks GitHub to cancel a queued or running run; it takes a few seconds. */
+  githubCancelWorkflowRun: (path: string, run: number) =>
+    unwrap(commands.githubCancelWorkflowRun(path, run)),
+  /** Starts one job of a finished run again, with the jobs that depend on it. */
+  githubRerunJob: (path: string, job: number) => unwrap(commands.githubRerunJob(path, job)),
 
   // commit message assistant
   /** The providers an API key is stored for. */

@@ -193,6 +193,23 @@ export const commands = {
 	/**  Deletes a run that is over, with its logs and artifacts. */
 	githubDeleteWorkflowRun: (path: string, run: number) => typedError<null, AppError>(__TAURI_INVOKE("github_delete_workflow_run", { path, run })),
 	/**
+	 *  Starts a run that is over again, every job of it. GitHub refuses while it
+	 *  still runs.
+	 */
+	githubRerunWorkflowRun: (path: string, run: number) => typedError<null, AppError>(__TAURI_INVOKE("github_rerun_workflow_run", { path, run })),
+	/**
+	 *  Starts the failed jobs of a run that is over again, with those that depend
+	 *  on them. GitHub refuses while it still runs, and when no job failed.
+	 */
+	githubRerunFailedJobs: (path: string, run: number) => typedError<null, AppError>(__TAURI_INVOKE("github_rerun_failed_jobs", { path, run })),
+	/**
+	 *  Cancels a run that is queued or in progress; GitHub takes a few seconds
+	 *  to do it. A run that is over cannot be cancelled.
+	 */
+	githubCancelWorkflowRun: (path: string, run: number) => typedError<null, AppError>(__TAURI_INVOKE("github_cancel_workflow_run", { path, run })),
+	/**  Starts one job of a run that is over again, with the jobs that depend on it. */
+	githubRerunJob: (path: string, job: number) => typedError<null, AppError>(__TAURI_INVOKE("github_rerun_job", { path, job })),
+	/**
 	 *  The providers that can be used now: a key is stored for them, or their
 	 *  program is installed.
 	 */

@@ -1,5 +1,6 @@
 //! GitHub Actions: the workflow runs of a repository, their jobs and their
-//! steps; and deleting the runs that are over.
+//! steps; starting a run (or only its failed jobs, or one job) again, cancelling
+//! one, and deleting the runs that are over.
 //!
 //! GitHub has nothing to push to a desktop application, so the UI asks again
 //! every few seconds while something runs; see [`GitHub::poll`].
@@ -184,6 +185,56 @@ impl GitHub {
             }
         }
     }
+
+    /// Starts a run over, every job of it, as a new attempt of the same run.
+    /// GitHub refuses (403) while the run is still queued or running, and
+    /// answers `201 Created` once the attempt is scheduled: the run shows as
+    /// queued a moment later.
+    pub async fn rerun_workflow_run(&self, repo: &GitHubRepo, run: u64) -> Result<()> {
+        self.act(run_route(repo, run, "rerun")).await
+    }
+
+    /// Starts the failed jobs of a run again, with those that depend on them,
+    /// as a new attempt; the jobs that passed keep their verdict. GitHub
+    /// counts cancelled jobs as failed, and refuses (403) while the run is
+    /// still going, and when no job failed ("cannot be retried").
+    pub async fn rerun_failed_jobs(&self, repo: &GitHubRepo, run: u64) -> Result<()> {
+        self.act(run_route(repo, run, "rerun-failed-jobs")).await
+    }
+
+    /// Asks GitHub to cancel a run that is queued or in progress. GitHub answers
+    /// `202 Accepted`, then stops the jobs one by one: the run stays in progress
+    /// for up to a minute before it shows as cancelled. A run that is over
+    /// cannot be cancelled (409).
+    pub async fn cancel_workflow_run(&self, repo: &GitHubRepo, run: u64) -> Result<()> {
+        self.act(run_route(repo, run, "cancel")).await
+    }
+
+    /// Starts one job again, with the jobs that depend on it, as a new attempt
+    /// of its run. GitHub refuses (403) while the run is still going.
+    pub async fn rerun_job(&self, repo: &GitHubRepo, job: u64) -> Result<()> {
+        let route = format!(
+            "/repos/{}/{}/actions/jobs/{job}/rerun",
+            repo.owner, repo.name
+        );
+        self.act(route).await
+    }
+
+    /// A `POST` without a body whose answer is only its status: GitHub says
+    /// why it refuses in the message that [`Error::Api`] shows.
+    async fn act(&self, route: String) -> Result<()> {
+        let response = self.client._post(route, None::<&()>).await?;
+        octocrab::map_github_error(response).await?;
+        Ok(())
+    }
+}
+
+/// `POST …/actions/runs/{run}/{action}`.
+fn run_route(repo: &GitHubRepo, run: u64, action: &str) -> String {
+    format!(
+        "/repos/{}/{}/actions/runs/{run}/{action}",
+        repo.owner, repo.name
+    )
 }
 
 // What GitHub sends, read leniently: one run without a branch, a name or a
@@ -317,6 +368,18 @@ fn workflow_job(job: RawJob) -> WorkflowJob {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn run_actions_are_posted_to_the_run() {
+        let repo = GitHubRepo {
+            owner: "me".to_owned(),
+            name: "repo".to_owned(),
+        };
+        assert_eq!(
+            run_route(&repo, 18_431_216_543, "rerun-failed-jobs"),
+            "/repos/me/repo/actions/runs/18431216543/rerun-failed-jobs"
+        );
+    }
 
     #[test]
     fn status_and_conclusion_fold_into_one_state() {

@@ -676,9 +676,18 @@ interface RunPlan {
   event: string;
   branch: string;
   commit: string;
-  /** Seconds since the Unix epoch. */
+  /** Seconds since the Unix epoch; of the latest attempt once started again. */
   createdAt: number;
   jobs: JobPlan[];
+  attempt: number;
+  /**
+   * By their index, the jobs this attempt did not run again, as they ended in
+   * the previous one: those that passed, when only the failed jobs were
+   * started again, or all but one when one job was.
+   */
+  kept: Map<number, WorkflowJob>;
+  /** When GitHub cancelled the run, a moment after being asked to. */
+  cancelledAt?: number;
 }
 
 function rustJob(os: string, after: number, slowness: number, fails?: number): JobPlan {
@@ -750,7 +759,44 @@ function startRun(
 ): void {
   const number = (runNumbers.get(workflow) ?? 0) + 1;
   runNumbers.set(workflow, number);
-  runPlans.unshift({ id: nextRunId++, workflow, number, event, branch, commit, createdAt: Math.floor(createdAt), jobs });
+  runPlans.unshift({
+    id: nextRunId++,
+    workflow,
+    number,
+    event,
+    branch,
+    commit,
+    createdAt: Math.floor(createdAt),
+    jobs,
+    attempt: 1,
+    kept: new Map(),
+  });
+}
+
+/** The run at `args.run`, which GitHub answers 404 for when it does not exist. */
+function runPlan(args: Record<string, unknown>): RunPlan {
+  const run = runPlans.find((candidate) => candidate.id === Number(args.run));
+  if (!run) throw githubError("GitHub refused the request: Not Found (404 Not Found)");
+  return run;
+}
+
+/** Refuses, as GitHub does, to start a run again while it is going. */
+function requireOver(run: RunPlan, at: number): void {
+  const { state } = runAt(run, at);
+  if (state === "queued" || state === "inProgress") {
+    throw githubError("GitHub refused the request: This workflow is already running (403 Forbidden)");
+  }
+}
+
+/**
+ * Starts a new attempt of `run` now, for the jobs not in `kept`. What failed
+ * before passes this time: flaky, as what one starts again usually is.
+ */
+function restart(run: RunPlan, at: number): void {
+  run.attempt += 1;
+  run.createdAt = Math.floor(at);
+  run.cancelledAt = undefined;
+  for (const job of run.jobs) delete job.fails;
 }
 
 // What ran before the application opened: the commits behind `origin/main`, one
@@ -774,7 +820,13 @@ function startRun(
   for (const run of past) startRun(...run);
 }
 
-function jobAt(run: RunPlan, plan: JobPlan, index: number, at: number): WorkflowJob {
+function jobAt(run: RunPlan, plan: JobPlan, index: number, asked: number): WorkflowJob {
+  const kept = run.kept.get(index);
+  if (kept) return kept;
+  // A cancelled run stays where it was when GitHub cancelled it.
+  const cut = run.cancelledAt ?? Infinity;
+  const cancelled = asked >= cut;
+  const at = cancelled ? cut : asked;
   const start = run.createdAt + plan.after;
   let clock = start;
   let broken = false;
@@ -782,21 +834,28 @@ function jobAt(run: RunPlan, plan: JobPlan, index: number, at: number): Workflow
     const number = position + 1;
     if (broken) return { number, name, state: "skipped", startedAt: null, completedAt: null };
     const begins = clock;
-    if (at < begins) return { number, name, state: "queued", startedAt: null, completedAt: null };
+    if (at < begins) {
+      return { number, name, state: cancelled ? "skipped" : "queued", startedAt: null, completedAt: null };
+    }
     clock += seconds;
-    if (at < clock) return { number, name, state: "inProgress", startedAt: begins, completedAt: null };
+    if (at < clock) {
+      return cancelled
+        ? { number, name, state: "cancelled", startedAt: begins, completedAt: at }
+        : { number, name, state: "inProgress", startedAt: begins, completedAt: null };
+    }
     broken = plan.fails === position;
     return { number, name, state: broken ? "failure" : "success", startedAt: begins, completedAt: clock };
   });
-  const over = at >= clock && steps.every((step) => step.state !== "queued");
+  // Ended on its own, before any cancellation.
+  const ran = at >= clock && steps.every((step) => step.state !== "queued" && step.state !== "cancelled");
   const id = run.id * 10 + index;
   return {
     id,
     name: plan.name,
-    state: at < start ? "queued" : !over ? "inProgress" : broken ? "failure" : "success",
+    state: ran ? (broken ? "failure" : "success") : cancelled ? "cancelled" : at < start ? "queued" : "inProgress",
     htmlUrl: `https://github.com/ada/mock-repo/actions/runs/${run.id}/job/${id}`,
     startedAt: at < start ? null : start,
-    completedAt: over ? clock : null,
+    completedAt: ran ? clock : cancelled ? at : null,
     steps,
   };
 }
@@ -813,10 +872,13 @@ function runAt(run: RunPlan, at = Date.now() / 1000): WorkflowRun {
       ? "inProgress"
       : jobs.some((job) => job.state === "failure")
         ? "failure"
-        : "success";
+        : jobs.some((job) => job.state === "cancelled")
+          ? "cancelled"
+          : "success";
   // The last time anything moved, which is the end of the run once it is over.
   const moments = jobs.flatMap((job) => [
     job.startedAt,
+    job.completedAt,
     ...job.steps.flatMap((step) => [step.startedAt, step.completedAt]),
   ]);
   return {
@@ -824,7 +886,7 @@ function runAt(run: RunPlan, at = Date.now() / 1000): WorkflowRun {
     workflow: run.workflow,
     title: byId.get(run.commit)?.summary ?? run.workflow,
     number: run.number,
-    attempt: 1,
+    attempt: run.attempt,
     event: run.event,
     branch: run.branch,
     commit: run.commit,
@@ -1457,6 +1519,60 @@ function handle(command: string, args: Record<string, unknown>): unknown {
       }
       runPlans.splice(index, 1);
       return delayed(null, 150);
+    }
+    case "github_rerun_workflow_run": {
+      requireAccount(path);
+      const run = runPlan(args);
+      const at = Date.now() / 1000;
+      requireOver(run, at);
+      run.kept.clear();
+      restart(run, at);
+      return delayed(null, 300);
+    }
+    case "github_rerun_failed_jobs": {
+      requireAccount(path);
+      const run = runPlan(args);
+      const at = Date.now() / 1000;
+      requireOver(run, at);
+      const jobs = jobsAt(run, at);
+      // GitHub counts cancelled jobs as failed, and has nothing to retry otherwise.
+      if (!jobs.some((job) => job.state === "failure" || job.state === "cancelled")) {
+        throw githubError("GitHub refused the request: This workflow run cannot be retried (403 Forbidden)");
+      }
+      run.kept.clear();
+      jobs.forEach((job, index) => {
+        if (job.state === "success") run.kept.set(index, job);
+      });
+      restart(run, at);
+      return delayed(null, 300);
+    }
+    case "github_rerun_job": {
+      requireAccount(path);
+      const id = Number(args.job);
+      const run = runPlans.find((candidate) => candidate.jobs.some((_, index) => candidate.id * 10 + index === id));
+      if (!run) throw githubError("GitHub refused the request: Not Found (404 Not Found)");
+      const at = Date.now() / 1000;
+      requireOver(run, at);
+      // Only that job runs again: the mock has no job that depends on another.
+      const jobs = jobsAt(run, at);
+      run.kept.clear();
+      jobs.forEach((job, index) => {
+        if (job.id !== id) run.kept.set(index, job);
+      });
+      restart(run, at);
+      return delayed(null, 300);
+    }
+    case "github_cancel_workflow_run": {
+      requireAccount(path);
+      const run = runPlan(args);
+      const at = Date.now() / 1000;
+      const { state } = runAt(run, at);
+      if (state !== "queued" && state !== "inProgress") {
+        throw githubError("GitHub refused the request: Cannot cancel a workflow run that is completed. (409 Conflict)");
+      }
+      // GitHub answers at once and cancels a moment later.
+      run.cancelledAt = Math.floor(at) + 2;
+      return delayed(null, 300);
     }
     // commit message assistant
     case "ai_providers":
