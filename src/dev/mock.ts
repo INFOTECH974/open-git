@@ -45,6 +45,8 @@ const DIALOG_PATHS = [
   "C:/Users/dev/projects/mock-repo",
   "C:/Users/dev/projects/mock-api",
   "C:/Users/dev/projects/mock-site",
+  // A repository that was only created locally: no remote yet.
+  "C:/Users/dev/projects/mock-local",
 ];
 const COMMIT_COUNT = 1200;
 const LATENCY_MS = 60;
@@ -362,6 +364,10 @@ interface MockRepo {
   state: RepoState;
   ahead: number;
   behind: number;
+  /** The configured remotes; a path containing `local` starts with none. */
+  remotes: string[];
+  /** Whether `main` tracks `origin/main`: from the start, or once pushed. */
+  tracked: boolean;
 }
 
 const repos = new Map<string, MockRepo>();
@@ -385,6 +391,7 @@ function repoAt(path: string): MockRepo {
     if (!path.includes("mock")) {
       throw gitError(`could not find repository at '${path}'; class=Repository (6); code=NotFound (-3)`);
     }
+    const local = path.includes("local");
     repo = {
       path,
       head: { branch: "main", target: tips.get("main")! },
@@ -392,7 +399,9 @@ function repoAt(path: string): MockRepo {
       stashes: [],
       state: "clean",
       ahead: 0,
-      behind: 2,
+      behind: local ? 0 : 2,
+      remotes: local ? [] : ["origin"],
+      tracked: !local,
     };
     repos.set(path, repo);
   }
@@ -400,7 +409,7 @@ function repoAt(path: string): MockRepo {
 }
 
 function infoOf(repo: MockRepo): RepoInfo {
-  const upstream = repo.head.branch === "main" ? "origin/main" : null;
+  const upstream = repo.tracked && repo.head.branch === "main" ? "origin/main" : null;
   return {
     name: repo.path.split("/").pop() ?? repo.path,
     path: repo.path,
@@ -413,7 +422,7 @@ function infoOf(repo: MockRepo): RepoInfo {
     },
     state: repo.state,
     author: { name: "Ada Lovelace", email: "ada@example.com" },
-    remotes: ["origin"],
+    remotes: [...repo.remotes],
   };
 }
 
@@ -981,8 +990,12 @@ function handle(command: string, args: Record<string, unknown>): unknown {
     case "close_repository":
       repos.delete(path);
       return null;
-    case "repository_refs":
-      return refs();
+    case "repository_refs": {
+      const all = refs();
+      // Without a remote there are no remote branches to show.
+      if (repoAt(path).remotes.length > 0) return all;
+      return all.filter((reference) => reference.kind !== "remoteBranch");
+    }
     case "open_in_editor":
     case "reveal_in_file_manager":
       console.info(`[open-git] mock: ${command} ${String(args.file)}`);
@@ -1266,15 +1279,27 @@ function handle(command: string, args: Record<string, unknown>): unknown {
     case "push": {
       const repo = repoAt(path);
       if (!repo.head.branch) throw gitError("HEAD is detached; check out a branch first");
+      if (repo.remotes.length === 0) throw gitError("this repository has no remote to push to");
       return withProgress(path, "push").then(() => {
         if (repo.head.branch === "main") {
           remoteTips.set("origin/main", repo.head.target);
           promotion = { due: Date.now() + PROMOTION_DELAY_MS, target: repo.head.target };
           startRun("CI", "push", "main", repo.head.target, ciJobs());
+          repo.tracked = true;
         }
         repo.ahead = 0;
         return null;
       });
+    }
+    case "add_remote": {
+      const repo = repoAt(path);
+      const name = String(args.name).trim();
+      const url = String(args.url).trim();
+      if (!name || !url) throw gitError("a remote needs a name and a URL");
+      if (repo.remotes.includes(name)) throw gitError(`error: remote ${name} already exists.`);
+      if (/[\s~^:?*[\\]/.test(name)) throw gitError(`fatal: '${name}' is not a valid remote name`);
+      repo.remotes.push(name);
+      return delayed(null, 200);
     }
     // GitHub
     case "github_accounts":
@@ -1326,6 +1351,8 @@ function handle(command: string, args: Record<string, unknown>): unknown {
       return delayed(repositoriesOf[account.login] ?? [], 500);
     }
     case "github_repository": {
+      // No `origin`, nothing on GitHub.
+      if (!repoAt(path).remotes.includes("origin")) return null;
       const bound = connectedAccount(repositoryAccounts.get(path))?.login ?? null;
       return {
         repo: { owner: ownerOf(path), name: path.split("/").pop() ?? "mock-repo" },

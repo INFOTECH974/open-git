@@ -29,6 +29,8 @@ pub enum Error {
     DetachedHead,
     #[error("this repository has no remote to push to")]
     NoRemote,
+    #[error("a remote needs a name and a URL")]
+    IncompleteRemote,
     #[error("`{name}` does not belong to a configured remote")]
     UnknownRemote { name: String },
     #[error("no merge, rebase, cherry-pick or revert is in progress")]

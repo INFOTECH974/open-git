@@ -17,6 +17,7 @@ export type Operation =
   | "branch"
   | "merge"
   | "stash"
+  | "remote"
   | "fetch"
   | "pull"
   | "push";

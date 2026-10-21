@@ -79,6 +79,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::fetch_in_background,
             commands::pull,
             commands::push,
+            commands::add_remote,
             // GitHub
             github::github_accounts,
             github::github_sign_in,

@@ -50,6 +50,7 @@ export function RepoHeader({
 }: Props) {
   const { t } = useI18n();
   const { head } = info;
+  const hasRemote = info.remotes.length > 0;
   const busy = operation !== null;
   const networking = operation === "fetch" || operation === "pull" || operation === "push";
   const operationLabel =
@@ -114,7 +115,9 @@ export function RepoHeader({
                 ↑{head.ahead} ↓{head.behind}
               </span>
             ) : head.target ? (
-              <span className="ml-auto shrink-0 text-muted-foreground">{t("no upstream")}</span>
+              <span className="ml-auto shrink-0 text-muted-foreground">
+                {hasRemote ? t("no upstream") : t("no remote")}
+              </span>
             ) : (
               <span className="ml-auto shrink-0 text-muted-foreground">{t("no commits")}</span>
             )}
@@ -135,10 +138,14 @@ export function RepoHeader({
       <div className="mt-2 grid grid-cols-3 gap-1">
         <Action
           label={t("Fetch")}
-          tooltip={t("Fetch every remote and prune deleted branches")}
+          tooltip={
+            hasRemote
+              ? t("Fetch every remote and prune deleted branches")
+              : t("No remote to fetch from")
+          }
           icon={CloudDownload}
           running={operation === "fetch"}
-          disabled={busy}
+          disabled={busy || !hasRemote}
           onClick={onFetch}
         />
         <Action
@@ -146,20 +153,24 @@ export function RepoHeader({
           tooltip={
             head.upstream
               ? t("Pull from {upstream}", { upstream: head.upstream })
-              : t("Pull (needs an upstream branch)")
+              : hasRemote
+                ? t("Pull (needs an upstream branch)")
+                : t("No remote to pull from")
           }
           icon={ArrowDownToLine}
           count={head.behind}
           running={operation === "pull"}
-          disabled={busy || !head.branch}
+          disabled={busy || !head.branch || !hasRemote}
           onClick={onPull}
         />
         <Action
           label={t("Push")}
           tooltip={
-            head.upstream
-              ? t("Push to {upstream}", { upstream: head.upstream })
-              : t("Push and set the upstream branch")
+            !hasRemote
+              ? t("Add a remote to push to…")
+              : head.upstream
+                ? t("Push to {upstream}", { upstream: head.upstream })
+                : t("Push and set the upstream branch")
           }
           icon={ArrowUpFromLine}
           count={head.ahead}

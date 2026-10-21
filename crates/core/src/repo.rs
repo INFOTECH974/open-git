@@ -526,6 +526,20 @@ impl Repo {
         }
     }
 
+    /// Adds remote `name` at `url`, as `git remote add` does: fetching then brings
+    /// its branches, and pushing creates them there. Nothing goes over the
+    /// network. `git` refuses a name already taken or that it cannot accept.
+    pub fn add_remote(&mut self, name: &str, url: &str) -> Result<()> {
+        let (name, url) = (name.trim(), url.trim());
+        if name.is_empty() || url.is_empty() {
+            return Err(Error::IncompleteRemote);
+        }
+        // `--` keeps a name or URL starting with a dash from being read as an option.
+        self.run_git(&["remote", "add", "--", name, url], None)?;
+        self.refresh();
+        Ok(())
+    }
+
     /// The value of configuration variable `name`, wherever it is set: this
     /// repository, the user's configuration or the system's.
     pub fn config_value(&self, name: &str) -> Result<Option<String>> {

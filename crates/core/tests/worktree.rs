@@ -483,6 +483,54 @@ fn push_fetch_and_pull_against_a_bare_remote() {
 }
 
 #[test]
+fn adding_a_remote_gives_the_repository_somewhere_to_push() {
+    let fixture = Fixture::new();
+    let remote_dir = tempfile::tempdir().unwrap();
+    let remote = Repository::init_bare(remote_dir.path()).unwrap();
+    remote.set_head("refs/heads/main").unwrap();
+    let remote_url = remote_dir.path().to_string_lossy().replace('\\', "/");
+
+    let mut repo = fixture.repo();
+    assert!(repo.info().unwrap().remotes.is_empty());
+    assert!(matches!(repo.push(), Err(Error::NoRemote)));
+    assert!(matches!(
+        repo.add_remote("origin", "  "),
+        Err(Error::IncompleteRemote)
+    ));
+    assert!(matches!(
+        repo.add_remote("", &remote_url),
+        Err(Error::IncompleteRemote)
+    ));
+
+    repo.add_remote(" origin ", &remote_url).unwrap();
+    assert_eq!(repo.info().unwrap().remotes, ["origin"]);
+    assert_eq!(
+        repo.remote_url("origin").unwrap().as_deref(),
+        Some(remote_url.as_str())
+    );
+
+    // git itself refuses a name already taken, or one it does not accept.
+    assert!(matches!(
+        repo.add_remote("origin", &remote_url),
+        Err(Error::Command { .. })
+    ));
+    assert!(matches!(
+        repo.add_remote("not valid", &remote_url),
+        Err(Error::Command { .. })
+    ));
+    assert_eq!(repo.info().unwrap().remotes, ["origin"]);
+
+    // The first push goes through the new remote and tracks it.
+    repo.push().unwrap();
+    let head = repo.info().unwrap().head;
+    assert_eq!(head.upstream.as_deref(), Some("origin/main"));
+    assert_eq!(
+        remote.find_reference("refs/heads/main").unwrap().target(),
+        Some(fixture.initial)
+    );
+}
+
+#[test]
 fn background_fetch_follows_a_branch_moved_on_the_remote() {
     let fixture = Fixture::new();
     let remote_dir = tempfile::tempdir().unwrap();

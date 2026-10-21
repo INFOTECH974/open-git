@@ -125,6 +125,9 @@ export const api = {
   fetchInBackground: (path: string) => unwrap(commands.fetchInBackground(path)),
   pull: (path: string) => unwrap(commands.pull(path)),
   push: (path: string) => unwrap(commands.push(path)),
+  /** Records a remote; fetch and push then go through it. Nothing is sent. */
+  addRemote: (path: string, name: string, url: string) =>
+    unwrap(commands.addRemote(path, name, url)),
 
   // GitHub
   /** The connected accounts and the login of the active one. */

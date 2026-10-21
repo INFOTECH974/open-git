@@ -622,3 +622,16 @@ pub fn pull(app: AppHandle, state: State<'_, AppState>, path: String) -> Result<
 pub fn push(app: AppHandle, state: State<'_, AppState>, path: String) -> Result<()> {
     run_remote(&app, &state, &path, "push", Repo::push_command)
 }
+
+/// Adds remote `name` at `url`; fetch and push then go through it. Nothing is
+/// sent over the network.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn add_remote(
+    state: State<'_, AppState>,
+    path: String,
+    name: String,
+    url: String,
+) -> Result<()> {
+    state.with_repo(&path, |repo| repo.add_remote(&name, &url))
+}

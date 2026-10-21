@@ -190,13 +190,14 @@ export interface RepositoryLink {
 /**
  * Follows which account works on the repository at `path`: the one it names,
  * else one that GitHub lets push to it, the active one first. The backend
- * decides; this asks again whenever an answer may have changed.
+ * decides; this asks again whenever an answer may have changed, including
+ * when the repository's `remotes` change (an `origin` added after the fact).
  */
-export function useRepositoryLink(path: string): RepositoryLink {
+export function useRepositoryLink(path: string, remotes: readonly string[]): RepositoryLink {
   const { accounts, account: active, refused } = useGitHub();
   const [link, setLink] = useState<GitHubLink | null | undefined>(undefined);
   const [changes, setChanges] = useState(0);
-  const connected = `${accounts.map((account) => account.login).join(" ")} > ${active?.login ?? ""} ! ${refused.join(" ")}`;
+  const connected = `${accounts.map((account) => account.login).join(" ")} > ${active?.login ?? ""} ! ${refused.join(" ")} @ ${remotes.join(" ")}`;
 
   useEffect(() => {
     let cancelled = false;

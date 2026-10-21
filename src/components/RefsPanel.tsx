@@ -12,6 +12,7 @@ import {
   GitMerge,
   Link,
   Pencil,
+  Plus,
   Search,
   Tag,
   Trash2,
@@ -60,12 +61,16 @@ interface Props {
   refs: RefInfo[];
   stashes: StashEntry[];
   head: HeadInfo;
+  /** The configured remotes: each gets a section, even one with no branch yet. */
+  remotes: string[];
   selectedId: string | null;
   /** While an operation runs, double-clicking does not start another checkout. */
   busy: boolean;
   onSelect(id: string): void;
   onRefAction(action: RefAction, reference: RefInfo): void;
   onStashAction(action: StashAction, stash: StashEntry): void;
+  /** Offered where the remotes would be, while there is none. */
+  onAddRemote(): void;
   /** Rendered below the stashes, inside the same scroll area (the GitHub sections). */
   children?: ReactNode;
 }
@@ -82,11 +87,13 @@ export function RefsPanel({
   refs,
   stashes,
   head,
+  remotes: configured,
   selectedId,
   busy,
   onSelect,
   onRefAction,
   onStashAction,
+  onAddRemote,
   children,
 }: Props) {
   const { t } = useI18n();
@@ -97,6 +104,9 @@ export function RefsPanel({
     const local: RefInfo[] = [];
     const tags: RefInfo[] = [];
     const remotes = new Map<string, RefInfo[]>();
+    // A remote just added, not fetched yet, has a section with nothing in it;
+    // a filter only shows the remotes with a matching branch.
+    if (!needle) for (const remote of configured) remotes.set(remote, []);
     for (const reference of refs) {
       if (needle && !reference.name.toLowerCase().includes(needle)) continue;
       switch (reference.kind) {
@@ -116,7 +126,7 @@ export function RefsPanel({
       }
     }
     return { local, remotes: [...remotes.entries()], tags };
-  }, [refs, needle]);
+  }, [refs, configured, needle]);
 
   const shownStashes = needle
     ? stashes.filter((stash) => stash.message.toLowerCase().includes(needle))
@@ -183,6 +193,26 @@ export function RefsPanel({
         <Section title={t("Local")} icon={GitBranch} count={groups.local.length}>
           {groups.local.map((reference) => item(reference, reference.name))}
         </Section>
+        {groups.remotes.length === 0 && !needle && (
+          <Section
+            title={t("Remotes")}
+            icon={Cloud}
+            count={0}
+            empty={
+              <li>
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-1.5 px-7 py-1 text-xs text-muted-foreground hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+                  onClick={onAddRemote}
+                  disabled={busy}
+                >
+                  <Plus className="size-3.5" aria-hidden />
+                  {t("Add a remote…")}
+                </button>
+              </li>
+            }
+          />
+        )}
         {groups.remotes.map(([remote, list]) => (
           <Section key={remote} title={remote} icon={Cloud} count={list.length}>
             {list.map((reference) =>
@@ -345,10 +375,12 @@ interface SectionProps {
   icon: Icon;
   count: number;
   defaultOpen?: boolean;
-  children: ReactNode;
+  /** Shown instead of "None" when the section has nothing: a row that offers to add something. */
+  empty?: ReactNode;
+  children?: ReactNode;
 }
 
-function Section({ title, icon: Icon, count, defaultOpen = true, children }: SectionProps) {
+function Section({ title, icon: Icon, count, defaultOpen = true, empty, children }: SectionProps) {
   const { t } = useI18n();
   const [open, setOpen] = useState(defaultOpen);
   const Chevron = open ? ChevronDown : ChevronRight;
@@ -368,7 +400,8 @@ function Section({ title, icon: Icon, count, defaultOpen = true, children }: Sec
       {open && (
         <ul>
           {children}
-          {count === 0 && <li className="px-7 py-1 text-xs text-muted-foreground">{t("None")}</li>}
+          {count === 0 &&
+            (empty ?? <li className="px-7 py-1 text-xs text-muted-foreground">{t("None")}</li>)}
         </ul>
       )}
     </section>

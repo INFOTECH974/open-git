@@ -291,6 +291,49 @@ export function RepositoryView({ info, active }: Props) {
       onConfirm: () => void run("stage", () => api.discardAll(path), "status"),
     });
 
+  /** Asks for a remote; with `thenPush`, the current branch is pushed to it right after. */
+  const addRemote = (thenPush: boolean) => {
+    const branch = repo.info.head.branch;
+    const taken = repo.info.remotes;
+    setForm({
+      title: t("Add a remote"),
+      description:
+        thenPush && branch
+          ? t("This repository has no remote yet. {branch} is pushed to it right after.", { branch })
+          : t("Where this repository fetches from and pushes to. Nothing is sent until you push."),
+      fields: [
+        {
+          key: "name",
+          label: t("Name"),
+          type: "text",
+          required: true,
+          mono: true,
+          initial: taken.includes("origin") ? "" : "origin",
+        },
+        {
+          key: "url",
+          label: t("URL"),
+          type: "text",
+          required: true,
+          mono: true,
+          placeholder: "https://github.com/owner/repo.git",
+        },
+      ],
+      action: thenPush ? t("Add and push") : t("Add"),
+      onSubmit: (values) => {
+        const add = () => api.addRemote(path, String(values.name), String(values.url));
+        if (thenPush) {
+          void run("push", async () => {
+            await add();
+            await api.push(path);
+          });
+        } else {
+          void run("remote", add);
+        }
+      },
+    });
+  };
+
   const stash = () =>
     setForm({
       title: t("Stash the changes"),
@@ -489,7 +532,7 @@ export function RepositoryView({ info, active }: Props) {
         .join(" "),
     [repo.refs],
   );
-  const forge = useRepositoryLink(path);
+  const forge = useRepositoryLink(path, repo.info.remotes);
   // An account whose token GitHub refuses has nothing to show.
   const workflows = useWorkflowRuns(
     path,
@@ -817,7 +860,11 @@ export function RepositoryView({ info, active }: Props) {
               onRefresh={() => void repo.refresh()}
               onFetch={() => void run("fetch", () => api.fetch(path))}
               onPull={() => void run("pull", () => api.pull(path))}
-              onPush={() => void run("push", () => api.push(path))}
+              onPush={() => {
+                // Nowhere to push yet: ask for a remote, then push there.
+                if (repo.info.remotes.length === 0) addRemote(true);
+                else void run("push", () => api.push(path));
+              }}
               onCancel={repo.cancel}
             />
             <div className="min-h-0 flex-1">
@@ -826,11 +873,13 @@ export function RepositoryView({ info, active }: Props) {
                   refs={repo.refs}
                   stashes={repo.stashes}
                   head={repo.info.head}
+                  remotes={repo.info.remotes}
                   selectedId={commitId}
                   busy={busy}
                   onSelect={(id) => select({ kind: "commit", id }, true)}
                   onRefAction={onRefAction}
                   onStashAction={onStashAction}
+                  onAddRemote={() => addRemote(false)}
                 >
                   <ForgePanel
                     repoPath={path}

@@ -122,6 +122,11 @@ export const commands = {
 	/**  Pushes the current branch, setting its upstream on the first push. */
 	push: (path: string) => typedError<null, AppError>(__TAURI_INVOKE("push", { path })),
 	/**
+	 *  Adds remote `name` at `url`; fetch and push then go through it. Nothing is
+	 *  sent over the network.
+	 */
+	addRemote: (path: string, name: string, url: string) => typedError<null, AppError>(__TAURI_INVOKE("add_remote", { path, name, url })),
+	/**
 	 *  The connected accounts, those whose token GitHub no longer accepts flagged.
 	 *  The token a version that knew a single account left in the keychain becomes
 	 *  the first of them.
