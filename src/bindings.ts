@@ -117,8 +117,17 @@ export const commands = {
 	 *  leaves the repository free for other commands while `git` runs.
 	 */
 	fetchInBackground: (path: string) => typedError<boolean, AppError>(__TAURI_INVOKE("fetch_in_background", { path })),
-	/**  `git pull` on the current branch, honouring the user's `pull.rebase` setting. */
-	pull: (path: string) => typedError<null, AppError>(__TAURI_INVOKE("pull", { path })),
+	/**
+	 *  `git pull` on the current branch. Without `mode` it follows the user's
+	 *  configuration, and fails with [`AppError::DivergentBranches`] when the
+	 *  branches have diverged and nothing says whether to merge or rebase. With
+	 *  `remember`, `mode` becomes what `git pull` does in this repository.
+	 */
+	pull: (path: string, mode: 
+/**  A merge commit, or a fast-forward when there is nothing local. */
+"merge" | 
+/**  The local commits replayed on top of the remote ones. */
+"rebase" | null, remember: boolean) => typedError<null, AppError>(__TAURI_INVOKE("pull", { path, mode, remember })),
 	/**  Pushes the current branch, setting its upstream on the first push. */
 	push: (path: string) => typedError<null, AppError>(__TAURI_INVOKE("push", { path })),
 	/**
@@ -288,6 +297,11 @@ export type AppError =
 { kind: "repositoryNotOpen"; message: string } | 
 /**  libgit2, the `git` binary or the core layer refused the operation. */
 { kind: "git"; message: string } | 
+/**
+ *  `git pull` needs to be told whether to merge or rebase: the branch and its
+ *  upstream have diverged.
+ */
+{ kind: "divergentBranches"; message: string } | 
 /**  The user stopped the operation: nothing went wrong. */
 { kind: "cancelled"; message: string } | 
 /**  The operating system refused something (opening a file, for instance). */
@@ -530,6 +544,13 @@ export type Provider =
 "claudecode" | 
 /**  The `codex` program installed on the machine, with its own sign-in. */
 "codex";
+
+/**  How `git pull` joins the commits of the remote branch with local ones. */
+export type PullMode = 
+/**  A merge commit, or a fast-forward when there is nothing local. */
+"merge" | 
+/**  The local commits replayed on top of the remote ones. */
+"rebase";
 
 export type PullRequest = {
 	number: number,

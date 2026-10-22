@@ -7,7 +7,7 @@ use std::{
 };
 
 use git2::{BranchType, ErrorCode, Repository};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     CommitDetails, Error, FileContents, FileDiff, GraphRow, RefInfo, RefKind, RepoState, Result,
@@ -19,6 +19,17 @@ use crate::{
 
 /// Receives the lines `git` prints while a network operation runs.
 pub type Progress<'a> = &'a mut dyn FnMut(&str);
+
+/// How `git pull` joins the commits of the remote branch with local ones.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
+#[serde(rename_all = "camelCase")]
+pub enum PullMode {
+    /// A merge commit, or a fast-forward when there is nothing local.
+    Merge,
+    /// The local commits replayed on top of the remote ones.
+    Rebase,
+}
 
 /// What `HEAD` points at.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -682,23 +693,91 @@ impl Repo {
         self.remote_command(&["fetch", "--all", "--prune", "--progress"])
     }
 
-    /// `git pull` on the current branch, honouring the user's `pull.rebase` setting.
-    pub fn pull(&mut self) -> Result<()> {
-        self.pull_with_progress(&CancelToken::new(), &mut |_| {})
+    /// `git pull` on the current branch. Without `mode` it follows the user's
+    /// configuration, and refuses with [`Error::DivergentBranches`] when that
+    /// configuration does not say how to join diverged branches.
+    pub fn pull(&mut self, mode: Option<PullMode>) -> Result<()> {
+        self.pull_with_progress(mode, &CancelToken::new(), &mut |_| {})
     }
 
     pub fn pull_with_progress(
         &mut self,
+        mode: Option<PullMode>,
         token: &CancelToken,
         progress: Progress<'_>,
     ) -> Result<()> {
-        let result = self.pull_command()?.run(token, progress);
+        if mode.is_none() {
+            self.check_pull()?;
+        }
+        let result = self.pull_command(mode)?.run(token, progress);
         self.refresh();
-        result
+        match result {
+            // The fetch done by `git pull` may have revealed the divergence.
+            Err(error) if mode.is_none() => self.check_pull().and(Err(error)),
+            result => result,
+        }
     }
 
-    pub fn pull_command(&self) -> Result<RemoteCommand> {
-        self.remote_command(&["pull", "--progress"])
+    pub fn pull_command(&self, mode: Option<PullMode>) -> Result<RemoteCommand> {
+        let mut args = vec!["pull", "--progress"];
+        match mode {
+            None => {}
+            // `--ff` also overrides a `pull.ff=only` setting.
+            Some(PullMode::Merge) => args.extend(["--no-rebase", "--ff"]),
+            // Git refuses to rebase over local changes; set them aside meanwhile.
+            Some(PullMode::Rebase) => args.extend(["--rebase", "--autostash"]),
+        }
+        self.remote_command(&args)
+    }
+
+    /// Fails with [`Error::DivergentBranches`] when a `git pull` following the
+    /// user's configuration would refuse: the branch and its upstream both have
+    /// commits of their own, and nothing says whether to merge or rebase.
+    pub fn check_pull(&self) -> Result<()> {
+        let head = self.head()?;
+        if let (Some(branch), Some(upstream)) = (head.branch, head.upstream)
+            && head.ahead > 0
+            && head.behind > 0
+            && !self.pull_configured(&branch)?
+        {
+            return Err(Error::DivergentBranches { branch, upstream });
+        }
+        Ok(())
+    }
+
+    /// Whether the configuration tells `git pull` how to join diverged branches,
+    /// as Git decides it: `branch.<name>.rebase` or `pull.rebase` set to rebase,
+    /// otherwise either of them or `pull.ff` set, unless `pull.ff` is `only`.
+    fn pull_configured(&self, branch: &str) -> Result<bool> {
+        let rebase = match self.config_value(&format!("branch.{branch}.rebase"))? {
+            Some(value) => Some(value),
+            None => self.config_value("pull.rebase")?,
+        };
+        let ff = self.config_value("pull.ff")?;
+        if rebase.as_deref().is_some_and(|value| !is_false(value)) {
+            return Ok(true);
+        }
+        if ff
+            .as_deref()
+            .is_some_and(|value| value.eq_ignore_ascii_case("only"))
+        {
+            return Ok(false);
+        }
+        Ok(rebase.is_some() || ff.is_some())
+    }
+
+    /// Makes `mode` what `git pull` does in this repository from now on.
+    pub fn remember_pull_mode(&self, mode: PullMode) -> Result<()> {
+        let rebase = mode == PullMode::Rebase;
+        self.set_config_value("pull.rebase", Some(if rebase { "true" } else { "false" }))?;
+        // `pull.ff=only`, from the user's configuration, would still refuse to merge.
+        let ff_only = self
+            .config_value("pull.ff")?
+            .is_some_and(|value| value.eq_ignore_ascii_case("only"));
+        if !rebase && ff_only {
+            self.set_config_value("pull.ff", Some("true"))?;
+        }
+        Ok(())
     }
 
     /// Pushes the current branch, setting its upstream on the first push.
@@ -781,4 +860,11 @@ fn short_ref_name(name: &str) -> String {
         .or_else(|| name.strip_prefix("refs/heads/"))
         .unwrap_or(name)
         .to_owned()
+}
+
+/// Whether Git reads `value` as false.
+fn is_false(value: &str) -> bool {
+    ["false", "no", "off", "0", ""]
+        .iter()
+        .any(|word| value.eq_ignore_ascii_case(word))
 }

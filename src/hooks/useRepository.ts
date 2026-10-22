@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { GraphRow, RefInfo, RepoInfo, StashEntry, WorkingTreeStatus } from "@/bindings";
-import { api, errorMessage, events, isCancelled, isRepositoryNotOpen } from "@/lib/api";
+import {
+  api,
+  errorMessage,
+  events,
+  isCancelled,
+  isDivergentBranches,
+  isRepositoryNotOpen,
+} from "@/lib/api";
 import { rowLaneCount } from "@/lib/graph";
 
 /** Rows fetched per request; a page covers several screens of history. */
@@ -182,7 +189,8 @@ export function useRepository(initial: RepoInfo, active: boolean): Repository {
         await (reload === "all" ? loadAll() : loadStatus());
         return true;
       } catch (failure) {
-        if (!isCancelled(failure)) setError(errorMessage(failure));
+        // A pull of diverged branches is a question for the user, asked by the caller.
+        if (!isCancelled(failure) && !isDivergentBranches(failure)) setError(errorMessage(failure));
         if (nextOperation === "fetch" && !isCancelled(failure)) {
           setFetchFailure(errorMessage(failure));
         }

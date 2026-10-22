@@ -8,6 +8,9 @@ pub enum AppError {
     RepositoryNotOpen(String),
     /// libgit2, the `git` binary or the core layer refused the operation.
     Git(String),
+    /// `git pull` needs to be told whether to merge or rebase: the branch and its
+    /// upstream have diverged.
+    DivergentBranches(String),
     /// The user stopped the operation: nothing went wrong.
     Cancelled(String),
     /// The operating system refused something (opening a file, for instance).
@@ -39,6 +42,9 @@ impl From<open_git_core::Error> for AppError {
     fn from(error: open_git_core::Error) -> Self {
         match error {
             open_git_core::Error::Cancelled => Self::Cancelled(error.to_string()),
+            open_git_core::Error::DivergentBranches { .. } => {
+                Self::DivergentBranches(error.to_string())
+            }
             _ => Self::Git(error.to_string()),
         }
     }

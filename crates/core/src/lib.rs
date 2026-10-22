@@ -23,7 +23,9 @@ pub use exec::{ASKPASS_ENV, CancelToken, add_config, set_askpass};
 pub use graph::{GraphRow, LaneRef, RowLayout};
 pub use ops::{ConflictSide, RepoState, StashEntry};
 pub use refs::{RefInfo, RefKind};
-pub use repo::{HeadInfo, Identity, Progress, RemoteCommand, Repo, RepoInfo, StagedChanges};
+pub use repo::{
+    HeadInfo, Identity, Progress, PullMode, RemoteCommand, Repo, RepoInfo, StagedChanges,
+};
 pub use status::{StatusEntry, WorkingTreeStatus};
 
 /// Git stores names, messages and paths as bytes; the UI only deals in strings.

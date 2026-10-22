@@ -7,8 +7,8 @@
 use std::time::Duration;
 
 use open_git_core::{
-    CommitDetails, ConflictSide, FileContents, FileDiff, GraphRow, RefInfo, RefKind, RemoteCommand,
-    Repo, RepoInfo, StashEntry, WorkingTreeStatus,
+    CommitDetails, ConflictSide, FileContents, FileDiff, GraphRow, PullMode, RefInfo, RefKind,
+    RemoteCommand, Repo, RepoInfo, StashEntry, WorkingTreeStatus,
 };
 use tauri::{AppHandle, State};
 use tauri_plugin_opener::OpenerExt;
@@ -613,11 +613,34 @@ pub fn fetch_in_background(state: State<'_, AppState>, path: String) -> Result<b
     Ok(before != after)
 }
 
-/// `git pull` on the current branch, honouring the user's `pull.rebase` setting.
+/// `git pull` on the current branch. Without `mode` it follows the user's
+/// configuration, and fails with [`AppError::DivergentBranches`] when the
+/// branches have diverged and nothing says whether to merge or rebase. With
+/// `remember`, `mode` becomes what `git pull` does in this repository.
 #[tauri::command(async)]
 #[specta::specta]
-pub fn pull(app: AppHandle, state: State<'_, AppState>, path: String) -> Result<()> {
-    run_remote(&app, &state, &path, "pull", Repo::pull_command)
+pub fn pull(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+    mode: Option<PullMode>,
+    remember: bool,
+) -> Result<()> {
+    match mode {
+        // Known to have diverged: no need to go to the network first.
+        None => state.with_repo(&path, |repo| repo.check_pull())?,
+        Some(mode) if remember => state.with_repo(&path, |repo| repo.remember_pull_mode(mode))?,
+        Some(_) => {}
+    }
+    let result = run_remote(&app, &state, &path, "pull", |repo| repo.pull_command(mode));
+    match result {
+        // The fetch done by `git pull` may have revealed the divergence.
+        Err(error) if mode.is_none() => match state.with_repo(&path, |repo| repo.check_pull()) {
+            Err(divergent @ AppError::DivergentBranches(_)) => Err(divergent),
+            _ => Err(error),
+        },
+        result => result,
+    }
 }
 
 /// Pushes the current branch, setting its upstream on the first push.

@@ -26,6 +26,7 @@ import type {
   Issue,
   LaneRef,
   Provider,
+  PullMode,
   PullRequest,
   RemoteRepository,
   RefInfo,
@@ -364,6 +365,8 @@ interface MockRepo {
   state: RepoState;
   ahead: number;
   behind: number;
+  /** `pull.rebase` written by "Always do this"; unset, a pull of diverged branches asks. */
+  pullMode: PullMode | null;
   /** The configured remotes; a path containing `local` starts with none. */
   remotes: string[];
   /** Whether `main` tracks `origin/main`: from the start, or once pushed. */
@@ -424,6 +427,7 @@ function repoAt(path: string): MockRepo {
       state: "clean",
       ahead: 0,
       behind: local ? 0 : 2,
+      pullMode: null,
       remotes: local ? [] : ["origin"],
       tracked: !local,
       ssh: stale,
@@ -1391,8 +1395,21 @@ function handle(command: string, args: Record<string, unknown>): unknown {
       return "https://github.com/ada-at-work/mock-site.git";
     }
     case "pull": {
+      // Commit on `main` first: with ↑ and ↓ both above zero, Pull asks how to join them.
       const repo = repoAt(path);
+      const remember = Boolean(args.remember);
+      const mode = (args.mode as PullMode | null) ?? repo.pullMode;
+      if (args.mode && remember) repo.pullMode = args.mode as PullMode;
+      if (!mode && repo.ahead > 0 && repo.behind > 0) {
+        const error: AppError = {
+          kind: "divergentBranches",
+          message: "`main` and `origin/main` have diverged: choose to merge or rebase",
+        };
+        throw error;
+      }
       return withProgress(path, "pull").then(() => {
+        // A merge adds its own commit; a rebase keeps the local ones on top.
+        if (mode === "merge" && repo.ahead > 0) repo.ahead++;
         repo.behind = 0;
         return null;
       });

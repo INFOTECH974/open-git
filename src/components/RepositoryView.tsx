@@ -19,6 +19,7 @@ import type {
   FileDiff,
   GraphRow,
   Issue,
+  PullMode,
   PullRequest,
   RefInfo,
   RepoInfo,
@@ -35,6 +36,7 @@ import {
 } from "@/components/CommitGraph";
 import { type Confirmation, ConfirmDialog } from "@/components/dialogs/ConfirmDialog";
 import { FormDialog, type FormRequest } from "@/components/dialogs/FormDialog";
+import { type DivergedBranches, PullChoiceDialog } from "@/components/dialogs/PullChoiceDialog";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { FileDiffView } from "@/components/FileDiffView";
 import { type GoneBranch, GoneBranchNotice } from "@/components/GoneBranchNotice";
@@ -60,7 +62,7 @@ import type { WorkflowRunAction } from "@/components/WorkflowRunsSection";
 import { WorkInProgressPanel } from "@/components/WorkInProgressPanel";
 import { isClean, useRepository } from "@/hooks/useRepository";
 import { useWorkflowRuns } from "@/hooks/useWorkflowRuns";
-import { api, errorMessage } from "@/lib/api";
+import { api, errorMessage, isDivergentBranches } from "@/lib/api";
 import { shortId } from "@/lib/format";
 import { branchNameForIssue, useRepositoryLink } from "@/lib/github";
 import { useI18n } from "@/lib/i18n";
@@ -122,6 +124,8 @@ export function RepositoryView({ info, active }: Props) {
   // A branch dragged onto another: what to do with them is asked in a dialog.
   const [dragging, setDragging] = useState<RefInfo | null>(null);
   const [dropRequest, setDropRequest] = useState<{ source: RefInfo; target: RefInfo } | null>(null);
+  // Pull found diverged branches and Git was not told whether to merge or rebase.
+  const [diverged, setDiverged] = useState<DivergedBranches | null>(null);
   // A small distance keeps clicks and double-clicks from starting a drag.
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
@@ -413,6 +417,27 @@ export function RepositoryView({ info, active }: Props) {
     const source = refFromDragId(String(event.active.id), repo.refs);
     const target = refFromDragId(String(event.over.id), repo.refs);
     if (source && target) setDropRequest({ source, target });
+  };
+
+  /** `git pull`; diverged branches without a configured mode ask how to join them. */
+  const pull = (mode: PullMode | null = null, remember = false) => {
+    let refused = false;
+    void run("pull", () =>
+      api.pull(path, mode, remember).catch((failure: unknown) => {
+        refused = isDivergentBranches(failure);
+        throw failure;
+      }),
+    ).then(async () => {
+      if (!refused) return;
+      // The pull may have fetched first: the counts come from the refreshed state.
+      const { head } = await api.refreshRepository(path);
+      setDiverged({
+        branch: head.branch ?? "HEAD",
+        upstream: head.upstream ?? "",
+        ahead: head.ahead,
+        behind: head.behind,
+      });
+    }).catch(report);
   };
 
   /** Checks `target` out when needed, then merges `source` into it. */
@@ -905,7 +930,7 @@ export function RepositoryView({ info, active }: Props) {
               }
               onRefresh={() => void repo.refresh()}
               onFetch={() => void run("fetch", () => api.fetch(path))}
-              onPull={() => void run("pull", () => api.pull(path))}
+              onPull={() => pull()}
               onPush={() => {
                 // Nowhere to push yet: ask for a remote, then push there.
                 if (repo.info.remotes.length === 0) addRemote(true);
@@ -1058,6 +1083,14 @@ export function RepositoryView({ info, active }: Props) {
       </ResizablePanelGroup>
       <ConfirmDialog confirmation={confirmation} onClose={() => setConfirmation(null)} />
       <FormDialog request={form} onClose={() => setForm(null)} />
+      <PullChoiceDialog
+        diverged={diverged}
+        onChoose={(mode, remember) => {
+          setDiverged(null);
+          pull(mode, remember);
+        }}
+        onClose={() => setDiverged(null)}
+      />
       <Dialog open={dropRequest !== null} onOpenChange={(open) => !open && setDropRequest(null)}>
         <DialogContent className="sm:max-w-md">
           {dropRequest && (

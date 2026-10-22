@@ -35,6 +35,10 @@ pub enum Error {
     UnknownRemote { name: String },
     #[error("no merge, rebase, cherry-pick or revert is in progress")]
     NoOperation,
+    /// Both sides have commits the other lacks and the configuration does not
+    /// say how `git pull` should join them: the user has to choose.
+    #[error("`{branch}` and `{upstream}` have diverged: choose to merge or rebase")]
+    DivergentBranches { branch: String, upstream: String },
     #[error("the operation was cancelled")]
     Cancelled,
 }

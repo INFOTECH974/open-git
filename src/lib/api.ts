@@ -5,6 +5,7 @@ import {
   type ConflictSide,
   type ItemState,
   type Provider,
+  type PullMode,
   type RefKind,
 } from "@/bindings";
 
@@ -123,7 +124,13 @@ export const api = {
   fetch: (path: string) => unwrap(commands.fetch(path)),
   /** The unattended fetch; resolves to whether a branch or tag moved. */
   fetchInBackground: (path: string) => unwrap(commands.fetchInBackground(path)),
-  pull: (path: string) => unwrap(commands.pull(path)),
+  /**
+   * Without `mode`, follows the user's configuration and rejects with
+   * `divergentBranches` (see `isDivergentBranches`) when that is not enough.
+   * With `remember`, `mode` becomes what a pull does in this repository.
+   */
+  pull: (path: string, mode: PullMode | null = null, remember = false) =>
+    unwrap(commands.pull(path, mode, remember)),
   push: (path: string) => unwrap(commands.push(path)),
   /** Records a remote; fetch and push then go through it. Nothing is sent. */
   addRemote: (path: string, name: string, url: string) =>
@@ -218,6 +225,11 @@ export function isCancelled(error: unknown): boolean {
 /** Whether GitHub no longer accepts the token of the account that was used. */
 export function isTokenRefused(error: unknown): boolean {
   return error instanceof CommandError && error.error.kind === "tokenRefused";
+}
+
+/** Whether a pull needs to be told to merge or rebase: the branches have diverged. */
+export function isDivergentBranches(error: unknown): boolean {
+  return error instanceof CommandError && error.error.kind === "divergentBranches";
 }
 
 export function isRepositoryNotOpen(error: unknown): boolean {

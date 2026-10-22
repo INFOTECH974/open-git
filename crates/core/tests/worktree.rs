@@ -8,7 +8,7 @@ use std::{ffi::OsString, fs, path::Path, process::Command, time::Duration};
 
 use git2::{IndexAddOption, Oid, Repository, RepositoryInitOptions, Signature, Time};
 use open_git_core::{
-    CancelToken, ConflictSide, DiffLineKind, Error, FileStatus, RefKind, Repo, RepoState,
+    CancelToken, ConflictSide, DiffLineKind, Error, FileStatus, PullMode, RefKind, Repo, RepoState,
     StatusEntry, add_config,
 };
 use tempfile::TempDir;
@@ -462,7 +462,7 @@ fn push_fetch_and_pull_against_a_bare_remote() {
         "the fetched commit is in the graph"
     );
 
-    repo.pull().unwrap();
+    repo.pull(None).unwrap();
     let head = repo.info().unwrap().head;
     assert_eq!((head.ahead, head.behind), (0, 0));
     assert_eq!(fixture.read("other.txt"), "from the other clone\n");
@@ -480,6 +480,83 @@ fn push_fetch_and_pull_against_a_bare_remote() {
 
     fixture.git().set_head_detached(fixture.initial).unwrap();
     assert!(matches!(repo.push(), Err(Error::DetachedHead)));
+}
+
+#[test]
+fn pull_of_diverged_branches_asks_to_merge_or_rebase() {
+    let fixture = Fixture::new();
+    let env = git_env(fixture.path());
+    let remote_dir = tempfile::tempdir().unwrap();
+    let remote = Repository::init_bare(remote_dir.path()).unwrap();
+    remote.set_head("refs/heads/main").unwrap();
+    let remote_url = remote_dir.path().to_string_lossy().replace('\\', "/");
+    let mut repo = fixture.repo();
+    fixture.git().remote("origin", &remote_url).unwrap();
+    repo.push().unwrap();
+
+    let other_dir = tempfile::tempdir().unwrap();
+    let other = other_dir.path().join("clone");
+    run_git(other_dir.path(), &env, &["clone", &remote_url, "clone"]);
+    // Each side commits a file of its own, so that both have diverged.
+    let diverge = |repo: &mut Repo, round: u32| {
+        run_git(&other, &env, &["pull"]);
+        write(&other, &format!("theirs{round}.txt"), "theirs\n");
+        run_git(&other, &env, &["add", "."]);
+        run_git(&other, &env, &["commit", "-m", "Theirs"]);
+        run_git(&other, &env, &["push"]);
+        fixture.write(&format!("mine{round}.txt"), "mine\n");
+        repo.stage_all().unwrap();
+        repo.commit("Mine\n", false).unwrap();
+    };
+    let parents = |repo: &Repo| {
+        let id = repo.info().unwrap().head.target.unwrap();
+        repo.commit_details(&id).unwrap().parents.len()
+    };
+
+    // Not fetched yet: `git pull` fetches, then refuses.
+    diverge(&mut repo, 1);
+    assert_eq!(repo.info().unwrap().head.behind, 0);
+    let refused = repo.pull(None).unwrap_err();
+    assert!(
+        matches!(&refused, Error::DivergentBranches { branch, upstream }
+            if branch == "main" && upstream == "origin/main"),
+        "{refused}"
+    );
+    let head = repo.info().unwrap().head;
+    assert_eq!((head.ahead, head.behind), (1, 1));
+    // Known to have diverged: refused before going to the network.
+    assert!(matches!(
+        repo.pull(None),
+        Err(Error::DivergentBranches { .. })
+    ));
+
+    // Rebase, over a local change that is set aside meanwhile.
+    fixture.write("README.md", "edited\n");
+    repo.pull(Some(PullMode::Rebase)).unwrap();
+    let head = repo.info().unwrap().head;
+    assert_eq!((head.ahead, head.behind), (1, 0));
+    assert_eq!(parents(&repo), 1);
+    assert_eq!(fixture.read("README.md"), "edited\n");
+    repo.discard_all().unwrap();
+
+    diverge(&mut repo, 2);
+    repo.pull(Some(PullMode::Merge)).unwrap();
+    let head = repo.info().unwrap().head;
+    assert_eq!(head.behind, 0);
+    assert_eq!(parents(&repo), 2, "a merge commit");
+    assert!(fixture.path().join("theirs2.txt").exists());
+
+    // Remembered: `git pull` no longer needs to be told.
+    repo.remember_pull_mode(PullMode::Rebase).unwrap();
+    assert_eq!(
+        repo.config_value("pull.rebase").unwrap().as_deref(),
+        Some("true")
+    );
+    diverge(&mut repo, 3);
+    repo.fetch().unwrap();
+    repo.pull(None).unwrap();
+    assert_eq!(repo.info().unwrap().head.behind, 0);
+    assert_eq!(parents(&repo), 1);
 }
 
 #[test]

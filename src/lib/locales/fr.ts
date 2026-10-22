@@ -325,6 +325,14 @@ export const fr: Record<string, string> = {
   "Rewrites the commits of {source} on top of {target}.":
     "Réécrit les commits de {source} par-dessus {target}.",
   "Only a local branch can be rebased.": "Seule une branche locale peut être rebasée.",
+  "The branches have diverged": "Les branches ont divergé",
+  "{branch} and {upstream} each have commits the other lacks (↑{ahead} ↓{behind}). How should they be joined?":
+    "{branch} et {upstream} ont chacune des commits que l'autre n'a pas (↑{ahead} ↓{behind}). Comment les réunir ?",
+  "Replays your commits on top of {upstream}: the history stays in a straight line.":
+    "Rejoue vos commits par-dessus {upstream} : l'historique reste linéaire.",
+  "Joins both sides with a merge commit on {branch}.":
+    "Réunit les deux côtés par un commit de fusion sur {branch}.",
+  "Always do this when pulling in this repository": "Toujours faire ainsi pour les pulls de ce dépôt",
 
   // ---- GitHub --------------------------------------------------------------
   "A repository uses the account it was cloned with or given, else one of these that can push to it, the active one first.":
