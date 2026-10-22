@@ -55,7 +55,6 @@ pub fn add_config(env: &mut Vec<(OsString, OsString)>, key: &str, value: &str) {
 }
 
 pub(crate) struct GitOutput {
-    #[allow(dead_code)]
     pub stdout: String,
     #[allow(dead_code)]
     pub stderr: String,

@@ -749,11 +749,11 @@ impl Repo {
     /// as Git decides it: `branch.<name>.rebase` or `pull.rebase` set to rebase,
     /// otherwise either of them or `pull.ff` set, unless `pull.ff` is `only`.
     fn pull_configured(&self, branch: &str) -> Result<bool> {
-        let rebase = match self.config_value(&format!("branch.{branch}.rebase"))? {
+        let rebase = match self.git_config(&format!("branch.{branch}.rebase"))? {
             Some(value) => Some(value),
-            None => self.config_value("pull.rebase")?,
+            None => self.git_config("pull.rebase")?,
         };
-        let ff = self.config_value("pull.ff")?;
+        let ff = self.git_config("pull.ff")?;
         if rebase.as_deref().is_some_and(|value| !is_false(value)) {
             return Ok(true);
         }
@@ -766,13 +766,25 @@ impl Repo {
         Ok(rebase.is_some() || ff.is_some())
     }
 
+    /// `name` as the `git` binary reads it, which is what `git pull` acts on.
+    /// libgit2 may read other files: it ignores `GIT_CONFIG_NOSYSTEM`, and the
+    /// system configuration of Git for Windows sets `pull.rebase`.
+    fn git_config(&self, name: &str) -> Result<Option<String>> {
+        match self.run_git(&["config", "--get", name], None) {
+            Ok(output) => Ok(Some(output.stdout.trim_end().to_owned())),
+            // `git config --get` on a variable that is not set.
+            Err(Error::Command { code: Some(1), .. }) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
     /// Makes `mode` what `git pull` does in this repository from now on.
     pub fn remember_pull_mode(&self, mode: PullMode) -> Result<()> {
         let rebase = mode == PullMode::Rebase;
         self.set_config_value("pull.rebase", Some(if rebase { "true" } else { "false" }))?;
         // `pull.ff=only`, from the user's configuration, would still refuse to merge.
         let ff_only = self
-            .config_value("pull.ff")?
+            .git_config("pull.ff")?
             .is_some_and(|value| value.eq_ignore_ascii_case("only"));
         if !rebase && ff_only {
             self.set_config_value("pull.ff", Some("true"))?;
