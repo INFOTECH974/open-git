@@ -13,7 +13,11 @@ use open_git_core::{
 use tauri::{AppHandle, State};
 use tauri_plugin_opener::OpenerExt;
 
-use crate::{error::Result, github, progress, state::AppState};
+use crate::{
+    error::{AppError, Result},
+    github, progress,
+    state::AppState,
+};
 
 // ---- repositories ---------------------------------------------------------------
 
@@ -634,4 +638,22 @@ pub fn add_remote(
     url: String,
 ) -> Result<()> {
     state.with_repo(&path, |repo| repo.add_remote(&name, &url))
+}
+
+/// Points remote `name`, a GitHub repository reached over SSH, at its HTTPS
+/// address, where the accounts connected in the application answer `git`.
+/// Returns the new URL. Nothing is sent over the network.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn use_https_remote(state: State<'_, AppState>, path: String, name: String) -> Result<String> {
+    let current = state
+        .with_repo(&path, |repo| repo.remote_url(&name))?
+        .unwrap_or_default();
+    let Some(url) = open_git_forge::github_https_url(&current) else {
+        return Err(AppError::Git(format!(
+            "`{name}` is not a GitHub repository reached over SSH ({current})"
+        )));
+    };
+    state.with_repo(&path, |repo| repo.set_remote_url(&name, &url))?;
+    Ok(url)
 }

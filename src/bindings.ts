@@ -127,6 +127,12 @@ export const commands = {
 	 */
 	addRemote: (path: string, name: string, url: string) => typedError<null, AppError>(__TAURI_INVOKE("add_remote", { path, name, url })),
 	/**
+	 *  Points remote `name`, a GitHub repository reached over SSH, at its HTTPS
+	 *  address, where the accounts connected in the application answer `git`.
+	 *  Returns the new URL. Nothing is sent over the network.
+	 */
+	useHttpsRemote: (path: string, name: string) => typedError<string, AppError>(__TAURI_INVOKE("use_https_remote", { path, name })),
+	/**
 	 *  The connected accounts, those whose token GitHub no longer accepts flagged.
 	 *  The token a version that knew a single account left in the keychain becomes
 	 *  the first of them.
@@ -203,8 +209,8 @@ export const commands = {
 	 */
 	githubRerunFailedJobs: (path: string, run: number) => typedError<null, AppError>(__TAURI_INVOKE("github_rerun_failed_jobs", { path, run })),
 	/**
-	 *  Cancels a run that is queued or in progress; GitHub takes a few seconds
-	 *  to do it. A run that is over cannot be cancelled.
+	 *  Cancels a run that is queued or in progress; GitHub stops its jobs one by
+	 *  one, which can take a minute. A run that is over cannot be cancelled.
 	 */
 	githubCancelWorkflowRun: (path: string, run: number) => typedError<null, AppError>(__TAURI_INVOKE("github_cancel_workflow_run", { path, run })),
 	/**  Starts one job of a run that is over again, with the jobs that depend on it. */
@@ -457,6 +463,12 @@ export type HeadInfo = {
 	ahead: number,
 	/**  Commits on `upstream` that `branch` lacks. */
 	behind: number,
+	/**
+	 *  The remote-tracking branch `branch` is set to follow, when it no longer
+	 *  exists: deleted on the remote, then pruned by a fetch. `upstream` is then
+	 *  `None`.
+	 */
+	goneUpstream: string | null,
 };
 
 export type Hunk = {
@@ -572,6 +584,17 @@ export type RepoInfo = {
 	/**  `None` when `user.name` or `user.email` is not configured. */
 	author: Identity | null,
 	remotes: string[],
+	/**
+	 *  The branch to fall back on, such as `main`: the one `origin/HEAD` names,
+	 *  otherwise `main` or `master` when it exists. It may exist only on the
+	 *  remote, and checking it out then creates it.
+	 */
+	defaultBranch: string | null,
+	/**
+	 *  When the remotes were last fetched (`FETCH_HEAD`), in seconds since the
+	 *  Unix epoch; `None` when they never were.
+	 */
+	lastFetch: number | null,
 };
 
 /**  Whether an operation is waiting for the user to resolve conflicts or continue. */

@@ -1,4 +1,4 @@
-import type { ComponentType } from "react";
+import { type ComponentType, useEffect, useState } from "react";
 import {
   ArrowDownToLine,
   ArrowUpFromLine,
@@ -7,6 +7,7 @@ import {
   GitCommitHorizontal,
   LoaderCircle,
   RefreshCw,
+  TriangleAlert,
   X,
 } from "lucide-react";
 
@@ -14,9 +15,9 @@ import type { RepoInfo } from "@/bindings";
 import { CheckIcon } from "@/components/CheckIcon";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import type { Operation, Progress } from "@/hooks/useRepository";
+import { FETCH_TIMED_OUT, type FetchStatus, type Operation, type Progress } from "@/hooks/useRepository";
 import { CHECK_LABELS, type CommitChecks } from "@/lib/checks";
-import { shortId } from "@/lib/format";
+import { relativeTime, shortId } from "@/lib/format";
 import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
@@ -25,6 +26,12 @@ interface Props {
   operation: Operation | null;
   /** The running fetch, pull or push, as git reports it. */
   progress: Progress | null;
+  fetchStatus: FetchStatus;
+  /**
+   * Moves `origin` from SSH to HTTPS, where the connected GitHub accounts answer;
+   * offered when the fetch failed for lack of an SSH key.
+   */
+  onUseHttps?: () => void;
   /** The workflow runs of the checked-out commit, when GitHub has some. */
   checks: CommitChecks | undefined;
   onShowChecks(): void;
@@ -40,6 +47,8 @@ export function RepoHeader({
   info,
   operation,
   progress,
+  fetchStatus,
+  onUseHttps,
   checks,
   onShowChecks,
   onRefresh,
@@ -114,6 +123,13 @@ export function RepoHeader({
               >
                 ↑{head.ahead} ↓{head.behind}
               </span>
+            ) : head.goneUpstream ? (
+              <span
+                className="ml-auto shrink-0 text-amber-600 dark:text-amber-400"
+                title={t("{upstream} was deleted on the remote", { upstream: head.goneUpstream })}
+              >
+                {t("deleted on the remote")}
+              </span>
             ) : head.target ? (
               <span className="ml-auto shrink-0 text-muted-foreground">
                 {hasRemote ? t("no upstream") : t("no remote")}
@@ -139,12 +155,15 @@ export function RepoHeader({
         <Action
           label={t("Fetch")}
           tooltip={
-            hasRemote
-              ? t("Fetch every remote and prune deleted branches")
-              : t("No remote to fetch from")
+            !hasRemote
+              ? t("No remote to fetch from")
+              : fetchStatus.failure
+                ? t("The last fetch failed: the remote branches may be out of date")
+                : t("Fetch every remote and prune deleted branches")
           }
           icon={CloudDownload}
-          running={operation === "fetch"}
+          warning={hasRemote && fetchStatus.failure !== null}
+          running={operation === "fetch" || (fetchStatus.running && !busy)}
           disabled={busy || !hasRemote}
           onClick={onFetch}
         />
@@ -180,6 +199,10 @@ export function RepoHeader({
         />
       </div>
 
+      {hasRemote && !networking && (
+        <FetchLine status={fetchStatus} disabled={busy} onUseHttps={onUseHttps} />
+      )}
+
       {networking && (
         <div className="mt-2" role="status" aria-live="polite">
           <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
@@ -210,24 +233,120 @@ export function RepoHeader({
   );
 }
 
+/** Re-renders every `intervalMs`, for times shown relative to now. */
+function useNow(intervalMs: number): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), intervalMs);
+    return () => window.clearInterval(timer);
+  }, [intervalMs]);
+  return now;
+}
+
+/** A failed fetch in a few words; the full message goes in the tooltip. */
+function failureSummary(message: string, t: ReturnType<typeof useI18n>["t"]): string {
+  if (message === FETCH_TIMED_OUT) return t(FETCH_TIMED_OUT);
+  if (/Permission denied \(publickey/.test(message)) return t("no SSH key accepted by the remote");
+  if (/Host key verification failed/.test(message)) return t("the SSH host key could not be verified");
+  if (/Could not resolve host|unable to access .*(timed out|Failed to connect)/i.test(message)) {
+    return t("the remote cannot be reached");
+  }
+  if (/Authentication failed|could not read Username|terminal prompts disabled|Bad credentials/i.test(message)) {
+    return t("credentials refused by the remote");
+  }
+  if (/Repository not found|does not appear to be a git repository/i.test(message)) {
+    return t("repository not found on the remote");
+  }
+  const lines = message.split("\n").map((line) => line.trim()).filter(Boolean);
+  return lines[lines.length - 1] ?? message;
+}
+
+interface FetchLineProps {
+  status: FetchStatus;
+  disabled: boolean;
+  onUseHttps?: () => void;
+}
+
+/** When the remotes were last fetched, or why that no longer works. */
+function FetchLine({ status, disabled, onUseHttps }: FetchLineProps) {
+  const { t } = useI18n();
+  const now = useNow(30_000);
+  const when =
+    status.lastFetch === null
+      ? t("never")
+      : // Within a minute, "now" reads better than "0 minutes ago".
+        now / 1000 - status.lastFetch < 60
+        ? t("just now")
+        : relativeTime(status.lastFetch, now);
+
+  if (status.failure) {
+    return (
+      <div className="mt-2 space-y-1 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-[11px]" role="status">
+        <div className="flex items-start gap-1.5">
+          <TriangleAlert className="mt-px size-3.5 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden />
+          <span className="min-w-0" title={status.failure}>
+            {t("Fetch failed: {reason}", { reason: failureSummary(status.failure, t) })}
+          </span>
+        </div>
+        <div className="text-muted-foreground">
+          {t("Last successful fetch: {when}", { when })}
+        </div>
+        {onUseHttps && (
+          <Button variant="outline" size="xs" className="w-full" disabled={disabled} onClick={onUseHttps}>
+            {t("Use HTTPS for origin")}
+          </Button>
+        )}
+      </div>
+    );
+  }
+  return (
+    <div className="mt-1.5 flex items-center gap-1 text-[11px] text-muted-foreground" role="status">
+      {status.running ? (
+        <>
+          <LoaderCircle className="size-3 animate-spin" aria-hidden />
+          {t("Fetching…")}
+        </>
+      ) : (
+        t("Last fetch: {when}", { when })
+      )}
+    </div>
+  );
+}
+
 interface ActionProps {
   label: string;
   tooltip: string;
   icon: ComponentType<{ className?: string }>;
   count?: number;
+  /** An orange "!" badge: the action needs attention. */
+  warning?: boolean;
   running: boolean;
   disabled: boolean;
   onClick(): void;
 }
 
-function Action({ label, tooltip, icon: Icon, count = 0, running, disabled, onClick }: ActionProps) {
+function Action({
+  label,
+  tooltip,
+  icon: Icon,
+  count = 0,
+  warning = false,
+  running,
+  disabled,
+  onClick,
+}: ActionProps) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
         <Button variant="outline" size="xs" onClick={onClick} disabled={disabled}>
           {running ? <LoaderCircle className="animate-spin" /> : <Icon />}
           {label}
-          {count > 0 && (
+          {warning && (
+            <span className="rounded-full bg-amber-500 px-1 text-[10px] font-semibold leading-4 text-white">
+              !
+            </span>
+          )}
+          {!warning && count > 0 && (
             <span className="rounded-full bg-primary px-1 text-[10px] leading-4 text-primary-foreground tabular-nums">
               {count}
             </span>

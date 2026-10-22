@@ -169,6 +169,7 @@ fn head(branch: Option<&str>, target: Option<String>) -> HeadInfo {
         upstream: None,
         ahead: 0,
         behind: 0,
+        gone_upstream: None,
     }
 }
 

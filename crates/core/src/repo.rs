@@ -23,6 +23,7 @@ pub type Progress<'a> = &'a mut dyn FnMut(&str);
 /// What `HEAD` points at.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[cfg_attr(feature = "specta", derive(specta::Type))]
+#[serde(rename_all = "camelCase")]
 pub struct HeadInfo {
     /// The checked-out branch; `None` when `HEAD` is detached.
     pub branch: Option<String>,
@@ -34,6 +35,10 @@ pub struct HeadInfo {
     pub ahead: u32,
     /// Commits on `upstream` that `branch` lacks.
     pub behind: u32,
+    /// The remote-tracking branch `branch` is set to follow, when it no longer
+    /// exists: deleted on the remote, then pruned by a fetch. `upstream` is then
+    /// `None`.
+    pub gone_upstream: Option<String>,
 }
 
 /// Who commits are attributed to, from `user.name` and `user.email`.
@@ -46,6 +51,7 @@ pub struct Identity {
 
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(feature = "specta", derive(specta::Type))]
+#[serde(rename_all = "camelCase")]
 pub struct RepoInfo {
     pub name: String,
     /// The working directory, or the git directory of a bare repository.
@@ -56,6 +62,13 @@ pub struct RepoInfo {
     /// `None` when `user.name` or `user.email` is not configured.
     pub author: Option<Identity>,
     pub remotes: Vec<String>,
+    /// The branch to fall back on, such as `main`: the one `origin/HEAD` names,
+    /// otherwise `main` or `master` when it exists. It may exist only on the
+    /// remote, and checking it out then creates it.
+    pub default_branch: Option<String>,
+    /// When the remotes were last fetched (`FETCH_HEAD`), in seconds since the
+    /// Unix epoch; `None` when they never were.
+    pub last_fetch: Option<i64>,
 }
 
 /// The tree of a commit without files: what the first commit is compared to.
@@ -225,6 +238,8 @@ impl Repo {
             state: ops::repo_state(self.git.state()),
             author,
             remotes: self.remote_names()?,
+            default_branch: self.default_branch()?,
+            last_fetch: self.last_fetch(),
         })
     }
 
@@ -235,6 +250,7 @@ impl Repo {
             upstream: None,
             ahead: 0,
             behind: 0,
+            gone_upstream: None,
         };
         match self.git.head() {
             Ok(head) => {
@@ -258,8 +274,20 @@ impl Repo {
 
     fn fill_upstream(&self, branch: &str, info: &mut HeadInfo) -> Result<()> {
         let local = self.git.find_branch(branch, BranchType::Local)?;
-        let Ok(upstream) = local.upstream() else {
-            return Ok(());
+        let upstream = match local.upstream() {
+            Ok(upstream) => upstream,
+            Err(error) if error.code() == ErrorCode::NotFound => {
+                // Configured (`branch.<name>.merge`) but the reference is missing.
+                let refname = format!("refs/heads/{branch}");
+                if let Ok(name) = self.git.branch_upstream_name(&refname) {
+                    let name = lossy(&name);
+                    if self.git.find_reference(&name).is_err() {
+                        info.gone_upstream = Some(short_ref_name(&name));
+                    }
+                }
+                return Ok(());
+            }
+            Err(_) => return Ok(()),
         };
         info.upstream = Some(lossy(upstream.name_bytes()?));
         if let (Some(local_id), Some(upstream_id)) = (local.get().target(), upstream.get().target())
@@ -269,6 +297,47 @@ impl Repo {
             info.behind = behind as u32;
         }
         Ok(())
+    }
+
+    /// See [`RepoInfo::default_branch`].
+    fn default_branch(&self) -> Result<Option<String>> {
+        let remote = self.default_remote().ok();
+        if let Some(remote) = &remote {
+            // `origin/HEAD`, written by `git clone` or `git remote set-head`.
+            if let Ok(head) = self
+                .git
+                .find_reference(&format!("refs/remotes/{remote}/HEAD"))
+                && let Some(target) = head.symbolic_target_bytes()
+            {
+                let target = lossy(target);
+                if let Some(name) = target.strip_prefix(&format!("refs/remotes/{remote}/"))
+                    && self.git.find_reference(&target).is_ok()
+                {
+                    return Ok(Some(name.to_owned()));
+                }
+            }
+        }
+        for name in ["main", "master"] {
+            let local = self.git.find_branch(name, BranchType::Local).is_ok();
+            let remote = remote.as_ref().is_some_and(|remote| {
+                self.git
+                    .find_branch(&format!("{remote}/{name}"), BranchType::Remote)
+                    .is_ok()
+            });
+            if local || remote {
+                return Ok(Some(name.to_owned()));
+            }
+        }
+        Ok(None)
+    }
+
+    /// See [`RepoInfo::last_fetch`].
+    fn last_fetch(&self) -> Option<i64> {
+        let modified = std::fs::metadata(self.git.path().join("FETCH_HEAD"))
+            .and_then(|metadata| metadata.modified())
+            .ok()?;
+        let since_epoch = modified.duration_since(std::time::UNIX_EPOCH).ok()?;
+        i64::try_from(since_epoch.as_secs()).ok()
     }
 
     /// Branches and tags, sorted by name.
@@ -540,6 +609,22 @@ impl Repo {
         Ok(())
     }
 
+    /// Points remote `name` at `url`, as `git remote set-url` does, for fetching
+    /// and pushing alike. Nothing goes over the network.
+    pub fn set_remote_url(&mut self, name: &str, url: &str) -> Result<()> {
+        let (name, url) = (name.trim(), url.trim());
+        if name.is_empty() || url.is_empty() {
+            return Err(Error::IncompleteRemote);
+        }
+        if self.remote_url(name)?.is_none() {
+            return Err(Error::UnknownRemote {
+                name: name.to_owned(),
+            });
+        }
+        self.run_git(&["remote", "set-url", "--", name, url], None)?;
+        Ok(())
+    }
+
     /// The value of configuration variable `name`, wherever it is set: this
     /// repository, the user's configuration or the system's.
     pub fn config_value(&self, name: &str) -> Result<Option<String>> {
@@ -688,4 +773,12 @@ impl Repo {
     pub fn full_path(&self, relative: &str) -> Result<PathBuf> {
         Ok(self.workdir()?.join(relative))
     }
+}
+
+/// `refs/remotes/origin/main` → `origin/main`, `refs/heads/main` → `main`.
+fn short_ref_name(name: &str) -> String {
+    name.strip_prefix("refs/remotes/")
+        .or_else(|| name.strip_prefix("refs/heads/"))
+        .unwrap_or(name)
+        .to_owned()
 }

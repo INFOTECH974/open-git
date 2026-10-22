@@ -368,7 +368,20 @@ interface MockRepo {
   remotes: string[];
   /** Whether `main` tracks `origin/main`: from the start, or once pushed. */
   tracked: boolean;
+  /**
+   * Whether `origin` is reached over SSH without a key, so every fetch fails:
+   * `mock-site`, until `use_https_remote` moves it to HTTPS.
+   */
+  ssh: boolean;
+  /** When the remotes were last fetched, in seconds; `null` if never. */
+  lastFetch: number | null;
 }
+
+/** A topic branch of `mock-site`, merged and deleted on GitHub, not yet pruned. */
+const MERGED_BRANCH = "feature/old-landing";
+/** Remote branches the local branches other than `main` follow. */
+const UPSTREAMS = new Map([[MERGED_BRANCH, `origin/${MERGED_BRANCH}`]]);
+const DAY = 24 * 3600;
 
 const repos = new Map<string, MockRepo>();
 
@@ -392,16 +405,29 @@ function repoAt(path: string): MockRepo {
       throw gitError(`could not find repository at '${path}'; class=Repository (6); code=NotFound (-3)`);
     }
     const local = path.includes("local");
+    // `mock-site` is the repository left alone for months: checked out on a
+    // branch merged since, clean, its fetch refused for want of an SSH key.
+    const stale = path.includes("mock-site");
+    if (stale && !tips.has(MERGED_BRANCH)) {
+      const target = commits[Math.floor(COMMIT_COUNT * 0.9)].id;
+      tips.set(MERGED_BRANCH, target);
+      remoteTips.set(`origin/${MERGED_BRANCH}`, target);
+    }
+    const now = Math.floor(Date.now() / 1000);
     repo = {
       path,
-      head: { branch: "main", target: tips.get("main")! },
-      status: initialStatus(),
+      head: stale
+        ? { branch: MERGED_BRANCH, target: tips.get(MERGED_BRANCH)! }
+        : { branch: "main", target: tips.get("main")! },
+      status: stale ? { unstaged: [], staged: [], conflicted: [] } : initialStatus(),
       stashes: [],
       state: "clean",
       ahead: 0,
       behind: local ? 0 : 2,
       remotes: local ? [] : ["origin"],
       tracked: !local,
+      ssh: stale,
+      lastFetch: local ? null : stale ? now - 92 * DAY : now - 300,
     };
     repos.set(path, repo);
   }
@@ -409,20 +435,27 @@ function repoAt(path: string): MockRepo {
 }
 
 function infoOf(repo: MockRepo): RepoInfo {
-  const upstream = repo.tracked && repo.head.branch === "main" ? "origin/main" : null;
+  const branch = repo.head.branch;
+  const configured =
+    branch === "main" ? (repo.tracked ? "origin/main" : null) : (branch && UPSTREAMS.get(branch)) ?? null;
+  const upstream = configured && remoteTips.has(configured) ? configured : null;
+  const tracksMain = upstream === "origin/main";
   return {
     name: repo.path.split("/").pop() ?? repo.path,
     path: repo.path,
     head: {
-      branch: repo.head.branch,
+      branch,
       target: repo.head.target,
       upstream,
-      ahead: upstream ? repo.ahead : 0,
-      behind: upstream ? repo.behind : 0,
+      ahead: tracksMain ? repo.ahead : 0,
+      behind: tracksMain ? repo.behind : 0,
+      goneUpstream: configured && !upstream ? configured : null,
     },
     state: repo.state,
     author: { name: "Ada Lovelace", email: "ada@example.com" },
     remotes: [...repo.remotes],
+    defaultBranch: "main",
+    lastFetch: repo.lastFetch,
   };
 }
 
@@ -991,6 +1024,18 @@ const PROMOTION_DELAY_MS = 5000;
 let promotion: { due: number; target: string } | null = null;
 
 /** What a fetch brings back: whether a remote branch moved since the last one. */
+/** Fetches for `repo`: refused over SSH, otherwise prunes the merged branch. */
+function fetchFor(repo: MockRepo): boolean {
+  if (repo.ssh) {
+    throw gitError(
+      "git fetch --all --prune failed (exit code 128): git@github.com: Permission denied (publickey).\nfatal: Could not read from remote repository.\n\nPlease make sure you have the correct access rights\nand the repository exists.",
+    );
+  }
+  repo.lastFetch = Math.floor(Date.now() / 1000);
+  const pruned = repo.path.includes("mock-site") && remoteTips.delete(`origin/${MERGED_BRANCH}`);
+  return fetchRemote() || pruned;
+}
+
 function fetchRemote(): boolean {
   if (!promotion || Date.now() < promotion.due) return false;
   remoteTips.set("origin/production", promotion.target);
@@ -1326,11 +1371,25 @@ function handle(command: string, args: Record<string, unknown>): unknown {
     // remotes
     case "fetch":
       return withProgress(path, "fetch").then(() => {
-        fetchRemote();
+        fetchFor(repoAt(path));
         return null;
       });
     case "fetch_in_background":
-      return new Promise((resolve) => setTimeout(() => resolve(fetchRemote()), 400));
+      return new Promise((resolve, reject) =>
+        setTimeout(() => {
+          try {
+            resolve(fetchFor(repoAt(path)));
+          } catch (failure) {
+            reject(failure);
+          }
+        }, 400),
+      );
+    case "use_https_remote": {
+      const repo = repoAt(path);
+      if (!repo.ssh) throw gitError("`origin` is not a GitHub repository reached over SSH");
+      repo.ssh = false;
+      return "https://github.com/ada-at-work/mock-site.git";
+    }
     case "pull": {
       const repo = repoAt(path);
       return withProgress(path, "pull").then(() => {

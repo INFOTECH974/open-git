@@ -37,6 +37,7 @@ import { type Confirmation, ConfirmDialog } from "@/components/dialogs/ConfirmDi
 import { FormDialog, type FormRequest } from "@/components/dialogs/FormDialog";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { FileDiffView } from "@/components/FileDiffView";
+import { type GoneBranch, GoneBranchNotice } from "@/components/GoneBranchNotice";
 import { ForgePanel, type IssueAction, type PullRequestAction } from "@/components/ForgePanel";
 import {
   type RefAction,
@@ -533,6 +534,49 @@ export function RepositoryView({ info, active }: Props) {
     [repo.refs],
   );
   const forge = useRepositoryLink(path, repo.info.remotes);
+
+  // The checked-out branch was deleted on the remote (merged and cleaned up, most
+  // of the time) and a fetch pruned it: go to the default branch, as one would by
+  // hand. The local branch stays, so nothing is lost. Each branch once per tab, so
+  // going back to it on purpose is respected.
+  const [gone, setGone] = useState<GoneBranch | null>(null);
+  const handledGone = useRef(new Set<string>());
+  const { branch: headBranch, goneUpstream } = repo.info.head;
+  const defaultBranch = repo.info.defaultBranch;
+  useEffect(() => {
+    if (!headBranch || !goneUpstream || !defaultBranch || defaultBranch === headBranch) return;
+    if (handledGone.current.has(headBranch)) return;
+    // Wait for the working tree status, and for anything running to finish.
+    if (repo.operation !== null || repo.status === null) return;
+    handledGone.current.add(headBranch);
+    const notice = { branch: headBranch, upstream: goneUpstream, target: defaultBranch };
+    if (repo.info.state !== "clean" || !isClean(repo.status)) {
+      // Switching would carry the changes over, or fail: the user decides.
+      setGone({ ...notice, switched: false });
+      return;
+    }
+    void run("checkout", () => api.checkout(path, defaultBranch, "localBranch")).then((switched) =>
+      setGone({ ...notice, switched }),
+    );
+  }, [headBranch, goneUpstream, defaultBranch, repo.operation, repo.status, repo.info.state, run, path]);
+  // A notice offering to leave the branch is moot once the user left it.
+  useEffect(() => {
+    if (gone && !gone.switched && headBranch !== gone.branch) setGone(null);
+  }, [gone, headBranch]);
+
+  // The fetch failed for want of an SSH key while `origin` is on GitHub: over
+  // HTTPS, the accounts connected here answer instead.
+  const fetchFailure = repo.fetchStatus.failure;
+  const sshRefused =
+    fetchFailure !== null &&
+    /Permission denied \(publickey|Host key verification failed/.test(fetchFailure) &&
+    !!forge.link;
+  const switchToHttps = useCallback(() => {
+    void run("fetch", async () => {
+      await api.useHttpsRemote(path, "origin");
+      await api.fetch(path);
+    });
+  }, [run, path]);
   // An account whose token GitHub refuses has nothing to show.
   const workflows = useWorkflowRuns(
     path,
@@ -853,6 +897,8 @@ export function RepositoryView({ info, active }: Props) {
               info={repo.info}
               operation={repo.operation}
               progress={repo.progress}
+              fetchStatus={repo.fetchStatus}
+              onUseHttps={sshRefused ? switchToHttps : undefined}
               checks={headTarget ? workflows.byCommit.get(headTarget) : undefined}
               onShowChecks={() =>
                 workflowsRef.current?.scrollIntoView({ block: "start", behavior: "smooth" })
@@ -867,6 +913,23 @@ export function RepositoryView({ info, active }: Props) {
               }}
               onCancel={repo.cancel}
             />
+            {gone && (
+              <GoneBranchNotice
+                gone={gone}
+                busy={busy}
+                onSwitch={() =>
+                  void run("checkout", () => api.checkout(path, gone.target, "localBranch")).then(
+                    (switched) => switched && setGone({ ...gone, switched }),
+                  )
+                }
+                onDelete={() =>
+                  void run("branch", () => api.deleteBranch(path, gone.branch, false)).then(
+                    (deleted) => deleted && setGone(null),
+                  )
+                }
+                onDismiss={() => setGone(null)}
+              />
+            )}
             <div className="min-h-0 flex-1">
               <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd}>
                 <RefsPanel

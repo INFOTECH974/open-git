@@ -580,6 +580,98 @@ fn background_fetch_follows_a_branch_moved_on_the_remote() {
 }
 
 #[test]
+fn a_branch_deleted_on_the_remote_is_reported_gone_after_a_fetch() {
+    let fixture = Fixture::new();
+    let remote_dir = tempfile::tempdir().unwrap();
+    let remote = Repository::init_bare(remote_dir.path()).unwrap();
+    remote.set_head("refs/heads/main").unwrap();
+    let remote_url = remote_dir.path().to_string_lossy().replace('\\', "/");
+    fixture.git().remote("origin", &remote_url).unwrap();
+    let mut repo = fixture.repo();
+    assert_eq!(repo.info().unwrap().last_fetch, None);
+    repo.push().unwrap();
+
+    // A topic branch, pushed and tracked.
+    repo.create_branch("topic", "main", true).unwrap();
+    repo.push().unwrap();
+    let head = repo.info().unwrap().head;
+    assert_eq!(head.upstream.as_deref(), Some("origin/topic"));
+    assert_eq!(head.gone_upstream, None);
+
+    // Merged and deleted on GitHub: the next fetch prunes `origin/topic`.
+    remote
+        .find_reference("refs/heads/topic")
+        .unwrap()
+        .delete()
+        .unwrap();
+    repo.fetch().unwrap();
+    let info = repo.info().unwrap();
+    assert_eq!(info.head.branch.as_deref(), Some("topic"));
+    assert_eq!(info.head.upstream, None);
+    assert_eq!(info.head.gone_upstream.as_deref(), Some("origin/topic"));
+    assert_eq!(info.default_branch.as_deref(), Some("main"));
+    assert!(info.last_fetch.is_some());
+
+    // A branch that never had an upstream is not gone.
+    repo.create_branch("local-only", "main", true).unwrap();
+    assert_eq!(repo.info().unwrap().head.gone_upstream, None);
+}
+
+#[test]
+fn the_default_branch_follows_origin_head() {
+    let fixture = Fixture::new();
+    let remote_dir = tempfile::tempdir().unwrap();
+    let remote = Repository::init_bare(remote_dir.path()).unwrap();
+    remote.set_head("refs/heads/main").unwrap();
+    let remote_url = remote_dir.path().to_string_lossy().replace('\\', "/");
+    fixture.git().remote("origin", &remote_url).unwrap();
+    let mut repo = fixture.repo();
+    repo.push().unwrap();
+    repo.create_branch("develop", "main", true).unwrap();
+    repo.push().unwrap();
+
+    // `origin/HEAD` names `develop`, as `git clone` writes it for a remote whose
+    // default branch it is.
+    fixture
+        .git()
+        .reference_symbolic(
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/develop",
+            true,
+            "set-head",
+        )
+        .unwrap();
+    assert_eq!(
+        repo.info().unwrap().default_branch.as_deref(),
+        Some("develop")
+    );
+}
+
+#[test]
+fn a_remote_url_can_be_changed() {
+    let fixture = Fixture::new();
+    fixture
+        .git()
+        .remote("origin", "git@github.com:me/repo.git")
+        .unwrap();
+    let mut repo = fixture.repo();
+    assert_eq!(
+        repo.remote_url("origin").unwrap().as_deref(),
+        Some("git@github.com:me/repo.git")
+    );
+    repo.set_remote_url("origin", "https://github.com/me/repo.git")
+        .unwrap();
+    assert_eq!(
+        repo.remote_url("origin").unwrap().as_deref(),
+        Some("https://github.com/me/repo.git")
+    );
+    assert!(matches!(
+        repo.set_remote_url("upstream", "https://github.com/me/repo.git"),
+        Err(Error::UnknownRemote { .. })
+    ));
+}
+
+#[test]
 fn a_remote_command_takes_extra_configuration() {
     let fixture = Fixture::new();
     let remote_dir = tempfile::tempdir().unwrap();

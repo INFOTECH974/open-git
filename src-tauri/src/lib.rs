@@ -80,6 +80,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::pull,
             commands::push,
             commands::add_remote,
+            commands::use_https_remote,
             // GitHub
             github::github_accounts,
             github::github_sign_in,

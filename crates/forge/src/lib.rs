@@ -23,4 +23,4 @@ pub use error::{Error, Result};
 pub use github::{
     Account, Comment, GitHub, Issue, ItemState, Label, PullRequest, RemoteRepository,
 };
-pub use remote::{GitHubRepo, parse_github_url};
+pub use remote::{GitHubRepo, github_https_url, parse_github_url};

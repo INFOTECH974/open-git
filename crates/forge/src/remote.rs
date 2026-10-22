@@ -39,9 +39,35 @@ pub fn parse_github_url(url: &str) -> Option<GitHubRepo> {
     })
 }
 
+/// The HTTPS address of a GitHub repository given by an SSH URL
+/// (`git@github.com:owner/name.git`, `ssh://git@github.com/owner/name`), or
+/// `None` for any other URL. Over HTTPS, the accounts connected in the
+/// application answer `git`; over SSH only a key can.
+pub fn github_https_url(url: &str) -> Option<String> {
+    let url = url.trim();
+    if !(url.starts_with("git@github.com:") || url.starts_with("ssh://git@github.com/")) {
+        return None;
+    }
+    parse_github_url(url).map(|repo| format!("{}.git", repo.html_url()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ssh_urls_of_github_get_their_https_form() {
+        assert_eq!(
+            github_https_url("git@github.com:me/repo.git").as_deref(),
+            Some("https://github.com/me/repo.git")
+        );
+        assert_eq!(
+            github_https_url("ssh://git@github.com/me/repo").as_deref(),
+            Some("https://github.com/me/repo.git")
+        );
+        assert_eq!(github_https_url("https://github.com/me/repo.git"), None);
+        assert_eq!(github_https_url("git@gitlab.com:me/repo.git"), None);
+    }
 
     fn repo(owner: &str, name: &str) -> Option<GitHubRepo> {
         Some(GitHubRepo {

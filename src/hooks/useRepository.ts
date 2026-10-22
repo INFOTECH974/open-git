@@ -43,6 +43,8 @@ export interface Repository {
   operation: Operation | null;
   /** Progress of the running fetch, pull or push; `null` otherwise. */
   progress: Progress | null;
+  /** How the remotes were last brought up to date. */
+  fetchStatus: FetchStatus;
   error: string | null;
   /** Stops the running network operation. */
   cancel(): void;
@@ -63,6 +65,18 @@ export interface Repository {
   ensureRows(first: number, last: number): void;
   clearError(): void;
 }
+
+export interface FetchStatus {
+  /** When the remotes were last fetched, in seconds since the epoch; `null` if never. */
+  lastFetch: number | null;
+  /** Why the latest fetch failed, automatic or not; `null` once one succeeds. */
+  failure: string | null;
+  /** Whether the automatic fetch is running. */
+  running: boolean;
+}
+
+/** The failure recorded when the automatic fetch gives up waiting for the remote. */
+export const FETCH_TIMED_OUT = "The remote did not answer within 45 seconds";
 
 function isNetworkOperation(operation: Operation | null): boolean {
   return operation === "fetch" || operation === "pull" || operation === "push";
@@ -99,6 +113,11 @@ export function useRepository(initial: RepoInfo, active: boolean): Repository {
   const [operation, setOperation] = useState<Operation | null>(null);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Fetches that succeeded without changing anything do not reload `info`, whose
+  // `lastFetch` then lags: the time of the latest one is kept here too.
+  const [fetchedAt, setFetchedAt] = useState<number | null>(null);
+  const [fetchFailure, setFetchFailure] = useState<string | null>(null);
+  const [autoFetching, setAutoFetching] = useState(false);
   const [pages, setPages] = useState<Map<number, GraphRow[]>>(() => new Map());
   const inFlight = useRef(new Set<number>());
   // Bumped on every reload so responses to an older state are dropped.
@@ -155,10 +174,18 @@ export function useRepository(initial: RepoInfo, active: boolean): Repository {
         // Two `git` processes updating the same remote branches would fight over them.
         if (isNetworkOperation(nextOperation)) await autoFetch.current;
         await action();
+        // Both bring the remote branches up to date.
+        if (nextOperation === "fetch" || nextOperation === "pull") {
+          setFetchedAt(Math.floor(Date.now() / 1000));
+          setFetchFailure(null);
+        }
         await (reload === "all" ? loadAll() : loadStatus());
         return true;
       } catch (failure) {
         if (!isCancelled(failure)) setError(errorMessage(failure));
+        if (nextOperation === "fetch" && !isCancelled(failure)) {
+          setFetchFailure(errorMessage(failure));
+        }
         // The operation may have changed things before failing (a merge with conflicts).
         await loadAll().catch(() => {});
         return false;
@@ -233,13 +260,26 @@ export function useRepository(initial: RepoInfo, active: boolean): Repository {
       // Reading (the first load, a refresh) can overlap; anything else goes first.
       if (operationRef.current !== null && operationRef.current !== "refresh") return;
       lastAutoFetch.current = Date.now();
+      setAutoFetching(true);
       autoFetch.current = api
         .fetchInBackground(path)
-        .catch(() => {
-          // Offline, no credentials, a remote that is gone: nobody asked for this
-          // fetch, so it fails quietly and the next one tries again.
-          return false;
-        })
+        // Recorded even when this effect was cleaned up meanwhile (the tab became
+        // active, for one): the outcome is still the latest, and the next fetch
+        // is up to a minute away.
+        .then(
+          (changed) => {
+            setFetchedAt(Math.floor(Date.now() / 1000));
+            setFetchFailure(null);
+            return changed;
+          },
+          (failure) => {
+            // Offline, no credentials, a remote that is gone: nobody asked for this
+            // fetch, so no error banner; the header shows why the remote branches
+            // may be stale, and the next fetch tries again.
+            setFetchFailure(isCancelled(failure) ? FETCH_TIMED_OUT : errorMessage(failure));
+            return false;
+          },
+        )
         .then(async (changed) => {
           if (!changed || stopped) return;
           // The watcher reports the same change; one reload is enough.
@@ -250,6 +290,7 @@ export function useRepository(initial: RepoInfo, active: boolean): Repository {
         .catch((failure) => setError(errorMessage(failure)))
         .finally(() => {
           autoFetch.current = null;
+          setAutoFetching(false);
         });
     };
     const fetchIfStale = () => {
@@ -355,6 +396,15 @@ export function useRepository(initial: RepoInfo, active: boolean): Repository {
     return map;
   }, [refs]);
 
+  const lastFetch =
+    info.lastFetch === null || fetchedAt === null
+      ? (info.lastFetch ?? fetchedAt)
+      : Math.max(info.lastFetch, fetchedAt);
+  const fetchStatus = useMemo<FetchStatus>(
+    () => ({ lastFetch, failure: fetchFailure, running: autoFetching }),
+    [lastFetch, fetchFailure, autoFetching],
+  );
+
   const clearError = useCallback(() => setError(null), []);
   const report = useCallback((failure: unknown) => setError(errorMessage(failure)), []);
 
@@ -368,6 +418,7 @@ export function useRepository(initial: RepoInfo, active: boolean): Repository {
     status,
     operation,
     progress,
+    fetchStatus,
     error,
     cancel,
     refresh,

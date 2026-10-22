@@ -128,6 +128,8 @@ export const api = {
   /** Records a remote; fetch and push then go through it. Nothing is sent. */
   addRemote: (path: string, name: string, url: string) =>
     unwrap(commands.addRemote(path, name, url)),
+  /** Moves a GitHub remote reached over SSH to HTTPS; resolves to its new URL. */
+  useHttpsRemote: (path: string, name: string) => unwrap(commands.useHttpsRemote(path, name)),
 
   // GitHub
   /** The connected accounts and the login of the active one. */
