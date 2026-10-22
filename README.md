@@ -35,6 +35,24 @@ and work with GitHub pull requests and issues without leaving the window.
   (and every few hours), then downloads, checks and installs it on request. The
   version and "Check for updates" are behind the application name, top left.
 
+## Installing on macOS
+
+The macOS builds are signed ad hoc, not with an Apple Developer ID, and are not
+notarized. The first time you open the app, macOS says it cannot verify it:
+
+1. Open the `.dmg` and drag **Open GIT** into **Applications**.
+2. Open it once; macOS refuses and offers only "Done" or "Move to Trash". Choose "Done".
+3. Go to **System Settings → Privacy & Security**, scroll down, and click
+   **Open Anyway** next to the message about Open GIT, then confirm.
+
+macOS remembers the choice for this copy.
+Releases up to 0.2.6 were not signed at all, and macOS called them "damaged". To open
+one of those, remove the quarantine flag in a terminal:
+
+```bash
+xattr -cr "/Applications/Open GIT.app"
+```
+
 ## Layout
 
 - `crates/core` — Git logic on top of `git2` plus the user's `git` binary, with no
