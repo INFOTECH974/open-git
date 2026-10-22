@@ -8,6 +8,10 @@ name: Release
 # public half is in `tauri.conf.json`) and `latest.json`, which the application
 # reads at `releases/latest/download/latest.json`. That address only follows
 # published releases: the update reaches the users once the draft is published.
+#
+# Every action is pinned to a commit rather than a tag: this workflow holds the
+# signing key, and a tag can be moved to other code. The comment after each
+# commit names its version.
 on:
   push:
     tags: ["v*"]
@@ -23,7 +27,7 @@ jobs:
     name: Tag matches the version
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       # An installed copy compares its own version with the one of `latest.json`,
       # both taken from `tauri.conf.json`: a tag without the bump updates nobody.
       - name: The tag is the version of tauri.conf.json
@@ -90,7 +94,7 @@ jobs:
             args: ""
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Linux packages for Tauri
         if: runner.os == 'Linux'
@@ -98,24 +102,24 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libdbus-1-dev pkg-config
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           targets: ${{ matrix.name == 'macos-arm' && 'aarch64-apple-darwin' || matrix.name == 'macos-intel' && 'x86_64-apple-darwin' || '' }}
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: ". -> target"
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
         with:
           version: 12
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
 
-      - uses: tauri-apps/tauri-action@v0
+      - uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -135,7 +139,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Write latest.json from the signatures of the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -28,3 +28,8 @@ dist-ssr
 
 # TypeScript incremental build info
 *.tsbuildinfo
+
+# Secrets
+.env
+*.key
+*.pem
